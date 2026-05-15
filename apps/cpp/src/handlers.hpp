@@ -41,7 +41,15 @@ struct AppDeps {
     std::string app_lang;
     int cache_ttl_seconds = 30;
     std::size_t max_body_bytes = 1048576;
+    std::string api_key;          // empty => auth disabled
 };
+
+// API-key check result. Disabled means the server is configured without a
+// key and every request is allowed.
+enum class AuthStatus { Ok, Missing, Invalid, Disabled };
+
+// Pure auth check (unit-testable). presented may be empty.
+AuthStatus check_api_key(const std::string& presented, const std::string& expected);
 
 // Each returns (status_code, body_json). All callers wrap as crow::response.
 struct HandlerResult {

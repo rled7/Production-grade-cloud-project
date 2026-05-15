@@ -132,6 +132,33 @@ static void test_build_all_key(void) {
     TEST_ASSERT_EQUAL_STRING("data:all", buf);
 }
 
+/* ---------- check_api_key ---------- */
+
+static void test_check_api_key_disabled_when_expected_empty(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_DISABLED, check_api_key(NULL, 0, NULL));
+    TEST_ASSERT_EQUAL_INT(AUTH_DISABLED, check_api_key(NULL, 0, ""));
+    /* Even a presented key is ignored when auth is disabled. */
+    TEST_ASSERT_EQUAL_INT(AUTH_DISABLED, check_api_key("anything", 8, ""));
+}
+
+static void test_check_api_key_missing(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key(NULL, 0, "secret"));
+    TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key("any", 0, "secret"));
+}
+
+static void test_check_api_key_invalid_wrong_length(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key("secre", 5, "secret"));
+    TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key("secrets", 7, "secret"));
+}
+
+static void test_check_api_key_invalid_wrong_value(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key("nopeXX", 6, "secret"));
+}
+
+static void test_check_api_key_ok(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_OK, check_api_key("secret", 6, "secret"));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_positive_long_accepts_simple);
@@ -150,5 +177,10 @@ int main(void) {
     RUN_TEST(test_should_use_cache_only_on_ok);
     RUN_TEST(test_build_item_key);
     RUN_TEST(test_build_all_key);
+    RUN_TEST(test_check_api_key_disabled_when_expected_empty);
+    RUN_TEST(test_check_api_key_missing);
+    RUN_TEST(test_check_api_key_invalid_wrong_length);
+    RUN_TEST(test_check_api_key_invalid_wrong_value);
+    RUN_TEST(test_check_api_key_ok);
     return UNITY_END();
 }

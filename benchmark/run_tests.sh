@@ -12,6 +12,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:?BASE_URL is required, e.g. https://api.example.com}"
+API_KEY="${API_KEY:?API_KEY is required (the value the services were deployed with)}"
 DURATION="${DURATION:-30s}"
 VUS="${VUS:-200}"
 LANGUAGES="${LANGUAGES:-js python c cpp}"
@@ -42,6 +43,8 @@ import { check } from 'k6';
 
 const base = __ENV.BASE_URL;
 const lang = __ENV.LANG_NAME;
+const apiKey = __ENV.API_KEY;
+const authHeaders = { 'X-API-Key': apiKey };
 
 export const options = {
     duration: __ENV.DURATION || '30s',
@@ -56,12 +59,12 @@ export default function () {
     // ~80% reads, 20% writes — exercises both cache hits and invalidation.
     const r = Math.random();
     if (r < 0.8) {
-        const res = http.get(`${base}/api/${lang}/data`);
+        const res = http.get(`${base}/api/${lang}/data`, { headers: authHeaders });
         check(res, { 'status 200': (r) => r.status === 200 });
     } else {
         const payload = JSON.stringify({ content: `bench-${Date.now()}` });
         const res = http.post(`${base}/api/${lang}/data`, payload, {
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
         });
         check(res, { 'status 201': (r) => r.status === 201 });
     }
@@ -78,6 +81,7 @@ for lang in $LANGUAGES; do
 
     if [ "$DRIVER" = "k6" ]; then
         BASE_URL="$BASE_URL" LANG_NAME="$lang" DURATION="$DURATION" VUS="$VUS" \
+            API_KEY="$API_KEY" \
             k6 run --summary-export "$raw" "$K6_SCRIPT" || true
 
         reqs=$(jq -r '.metrics.http_reqs.count // 0' "$raw")
@@ -91,6 +95,7 @@ for lang in $LANGUAGES; do
     else
         # wrk fallback: less rich metrics but a sane baseline.
         wrk -t8 -c"$VUS" -d"$DURATION" --latency \
+            -H "X-API-Key: $API_KEY" \
             "$BASE_URL/api/$lang/data" | tee "$raw"
         printf "%s,%s,%s,,,,,\n" "$lang" "$DURATION" "$VUS" >> "$SUMMARY_CSV"
     fi

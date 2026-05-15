@@ -7,6 +7,7 @@ const { createCache } = require('./cache');
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const LANG = process.env.APP_LANG || 'js';
 const MAX_BODY_BYTES = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10);
+const API_KEY = process.env.API_KEY || '';
 
 async function main() {
   const db = createDb();
@@ -17,7 +18,10 @@ async function main() {
   // background retry will keep trying.
   scheduleSchemaBootstrap(db);
 
-  const app = createApp({ db, cache, lang: LANG, maxBodyBytes: MAX_BODY_BYTES });
+  if (!API_KEY) {
+    console.warn('[server] API_KEY env var is empty — auth is DISABLED.');
+  }
+  const app = createApp({ db, cache, lang: LANG, maxBodyBytes: MAX_BODY_BYTES, apiKey: API_KEY });
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     // eslint-disable-next-line no-console

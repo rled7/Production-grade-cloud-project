@@ -36,6 +36,7 @@ class Config:
     cache_ttl_seconds: int
     redis_timeout_ms: int
     max_body_bytes: int
+    api_key: str  # empty string => auth disabled
 
     @property
     def redis_timeout_seconds(self) -> float:
@@ -67,4 +68,5 @@ def load_config() -> Config:
         cache_ttl_seconds=_env_int("CACHE_TTL_SECONDS", 30),
         redis_timeout_ms=_env_int("REDIS_TIMEOUT_MS", 200),
         max_body_bytes=_env_int("MAX_BODY_BYTES", 1048576),
+        api_key=_env_str("API_KEY", ""),
     )

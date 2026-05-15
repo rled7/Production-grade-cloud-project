@@ -79,6 +79,20 @@ bool path_has_prefix(const char *path, size_t plen,
     return path[prefix_len] == '/';
 }
 
+auth_status_t check_api_key(const char *presented, size_t presented_len,
+                            const char *expected) {
+    if (expected == NULL || expected[0] == '\0') return AUTH_DISABLED;
+    if (presented == NULL || presented_len == 0) return AUTH_MISSING;
+    size_t exp_len = strlen(expected);
+    if (presented_len != exp_len) return AUTH_INVALID;
+    /* constant-time compare to avoid timing oracles. */
+    unsigned char diff = 0;
+    for (size_t i = 0; i < exp_len; i++) {
+        diff |= (unsigned char) presented[i] ^ (unsigned char) expected[i];
+    }
+    return diff == 0 ? AUTH_OK : AUTH_INVALID;
+}
+
 /* ---------- Strbuf (dynamic buffer) ---------- */
 
 typedef struct {
@@ -388,7 +402,7 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
     const char *meth = hm->method.buf;
     size_t mlen = hm->method.len;
 
-    /* /health (GET) */
+    /* /health (GET) — always public for ALB target group health checks. */
     if (plen == 7 && memcmp(path, "/health", 7) == 0) {
         if (mlen == 3 && memcmp(meth, "GET", 3) == 0) {
             handle_health(c, app);
@@ -396,6 +410,24 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
             reply_error(c, 405, "method not allowed");
         }
         return;
+    }
+
+    /* API-key auth on every non-/health route. */
+    {
+        struct mg_str *h = mg_http_get_header(hm, "X-API-Key");
+        const char *pres = h ? h->buf : NULL;
+        size_t pres_len = h ? h->len : 0;
+        switch (check_api_key(pres, pres_len, app->api_key)) {
+            case AUTH_OK:
+            case AUTH_DISABLED:
+                break;
+            case AUTH_MISSING:
+                reply_error(c, 401, "missing api key");
+                return;
+            case AUTH_INVALID:
+                reply_error(c, 401, "invalid api key");
+                return;
+        }
     }
 
     /* /api/<lang>/data and /api/<lang>/data/<id> */

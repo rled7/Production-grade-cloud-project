@@ -73,6 +73,7 @@ function createApp(deps) {
     cache,
     lang = process.env.APP_LANG || 'js',
     maxBodyBytes = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10),
+    apiKey = process.env.API_KEY || '',
   } = deps;
 
   if (!db) throw new Error('createApp: db dependency is required');
@@ -81,13 +82,29 @@ function createApp(deps) {
   const app = express();
   app.disable('x-powered-by');
 
-  // Health is registered before body parsing so it stays cheap.
+  // Health is registered before body parsing AND before the auth middleware
+  // so the ALB target-group health check stays cheap and unauthenticated.
   app.get('/health', (_req, res) => {
     res
       .status(200)
       .type('application/json')
       .send(JSON.stringify({ status: 'ok', lang }));
   });
+
+  // API-key auth. When apiKey is the empty string the check is disabled
+  // (useful for some unit tests). In production the env var is always set.
+  if (apiKey) {
+    app.use((req, res, next) => {
+      const presented = req.header('x-api-key');
+      if (!presented) {
+        return jsonError(res, 401, 'missing api key');
+      }
+      if (presented !== apiKey) {
+        return jsonError(res, 401, 'invalid api key');
+      }
+      next();
+    });
+  }
 
   // Body parser scoped to the data POST route so other routes are not affected
   // by parser side effects. We use raw + manual JSON parse so we can produce

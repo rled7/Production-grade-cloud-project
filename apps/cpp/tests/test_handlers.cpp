@@ -119,3 +119,27 @@ TEST(HandleHealth, ReturnsLang) {
     EXPECT_NE(r.body.find("\"lang\":\"cpp\""), std::string::npos);
     EXPECT_NE(r.body.find("\"status\":\"ok\""), std::string::npos);
 }
+
+// ---------- check_api_key ----------
+
+TEST(CheckApiKey, DisabledWhenExpectedEmpty) {
+    EXPECT_EQ(check_api_key("", ""), AuthStatus::Disabled);
+    EXPECT_EQ(check_api_key("anything", ""), AuthStatus::Disabled);
+}
+
+TEST(CheckApiKey, MissingWhenPresentedEmpty) {
+    EXPECT_EQ(check_api_key("", "secret"), AuthStatus::Missing);
+}
+
+TEST(CheckApiKey, InvalidOnWrongLength) {
+    EXPECT_EQ(check_api_key("secre", "secret"), AuthStatus::Invalid);
+    EXPECT_EQ(check_api_key("secrets", "secret"), AuthStatus::Invalid);
+}
+
+TEST(CheckApiKey, InvalidOnWrongValue) {
+    EXPECT_EQ(check_api_key("nopeXX", "secret"), AuthStatus::Invalid);
+}
+
+TEST(CheckApiKey, OkOnExactMatch) {
+    EXPECT_EQ(check_api_key("secret", "secret"), AuthStatus::Ok);
+}

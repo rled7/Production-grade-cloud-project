@@ -54,8 +54,12 @@ def create_app(
     db: Optional[Any] = None,
     cache: Optional[Any] = None,
     config: Optional[Config] = None,
+    api_key: Optional[str] = None,
 ) -> FastAPI:
     cfg = config or load_config()
+    # Explicit api_key override wins; otherwise fall back to the config value.
+    # Empty string disables auth (useful for some unit tests).
+    effective_api_key = api_key if api_key is not None else cfg.api_key
     database = db if db is not None else Database(cfg.dsn)
     cache_obj = (
         cache
@@ -76,6 +80,21 @@ def create_app(
 
     api_prefix = cfg.api_prefix
     max_body = cfg.max_body_bytes
+
+    # API-key middleware. /health stays unauthenticated for the ALB health
+    # check. When effective_api_key is empty, auth is disabled.
+    if effective_api_key:
+
+        @app.middleware("http")
+        async def _api_key_auth(request: Request, call_next):
+            if request.url.path == "/health":
+                return await call_next(request)
+            presented = request.headers.get("x-api-key")
+            if not presented:
+                return _json(401, {"error": "missing api key"})
+            if presented != effective_api_key:
+                return _json(401, {"error": "invalid api key"})
+            return await call_next(request)
 
     @app.on_event("startup")
     def _startup() -> None:

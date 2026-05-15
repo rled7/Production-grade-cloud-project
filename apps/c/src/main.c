@@ -49,12 +49,17 @@ int main(void) {
     int ttl = env_int("CACHE_TTL_SECONDS", 30);
     int redis_timeout = env_int("REDIS_TIMEOUT_MS", 200);
     size_t max_body = (size_t) env_int("MAX_BODY_BYTES", 1048576);
+    const char *api_key = env_or("API_KEY", "");
 
     app_ctx_t app_ctx;
     memset(&app_ctx, 0, sizeof(app_ctx));
     app_ctx.app_lang = app_lang;
     app_ctx.cache_ttl_seconds = ttl;
     app_ctx.max_body_bytes = max_body;
+    app_ctx.api_key = api_key;
+    if (!api_key[0]) {
+        fprintf(stderr, "[warn] API_KEY env var is empty — auth is DISABLED.\n");
+    }
     int n = build_api_prefix(app_lang, app_ctx.api_prefix,
                              sizeof(app_ctx.api_prefix));
     if (n < 0) {

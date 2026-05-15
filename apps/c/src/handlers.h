@@ -16,7 +16,22 @@ typedef struct {
     size_t      api_prefix_len;
     int         cache_ttl_seconds;
     size_t      max_body_bytes;
+    const char *api_key;         /* NULL/"" => auth disabled */
 } app_ctx_t;
+
+/* Result of an API-key check. AUTH_DISABLED means the server is configured
+ * without an api_key and every request is allowed. */
+typedef enum {
+    AUTH_OK = 0,
+    AUTH_MISSING = 1,
+    AUTH_INVALID = 2,
+    AUTH_DISABLED = 3,
+} auth_status_t;
+
+/* Pure auth check (unit-testable). `presented` may be NULL/0-length.
+ * `expected` NULL/empty disables auth and returns AUTH_DISABLED. */
+auth_status_t check_api_key(const char *presented, size_t presented_len,
+                            const char *expected);
 
 /* ---------- Pure helpers (unit-testable, no I/O) ---------- */
 

@@ -63,6 +63,12 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "api_key" {
+  description = "API key required on the X-API-Key header for every /api/<lang>/* route. Stored in Secrets Manager and injected into each task. Empty disables auth."
+  type        = string
+  sensitive   = true
+}
+
 variable "redis_host" {
   description = "Redis hostname."
   type        = string

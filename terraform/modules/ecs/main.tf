@@ -66,14 +66,15 @@ resource "aws_cloudwatch_log_group" "this" {
 # Secrets Manager
 ############################
 resource "aws_secretsmanager_secret" "db" {
-  name        = "${var.project_name}-db-credentials"
-  description = "Database credentials for ${var.project_name} ECS services."
+  name        = "${var.project_name}-app-secrets"
+  description = "App credentials (DB password, API key) for ${var.project_name} ECS services."
 }
 
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id = aws_secretsmanager_secret.db.id
   secret_string = jsonencode({
     DB_PASSWORD = var.db_password
+    API_KEY     = var.api_key
   })
 }
 
@@ -168,6 +169,10 @@ resource "aws_ecs_task_definition" "this" {
         {
           name      = "DB_PASSWORD"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:DB_PASSWORD::"
+        },
+        {
+          name      = "API_KEY"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:API_KEY::"
         }
       ]
 

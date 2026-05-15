@@ -101,6 +101,20 @@ Edge cases (each app must satisfy all of these — covered by unit + integration
 - Redis down / timed out → **200**, `"source":"db"` (never 5xx because of Redis).
 - Postgres down → **503** with JSON error; process stays alive and reconnects.
 - Invalid id (non-positive integer) → **400**.
+- Missing `X-API-Key` header on any `/api/<lang>/*` route → **401** `{"error":"missing api key"}`.
+- Wrong `X-API-Key` → **401** `{"error":"invalid api key"}`.
+- `/health` is intentionally **unauthenticated** so the ALB target-group health check stays public.
+
+### Authentication
+
+Every `/api/<lang>/*` request must carry an `X-API-Key: <value>` header. The
+expected value comes from the `API_KEY` env var, which the production task
+definitions inject from AWS Secrets Manager. Locally, `docker compose` uses
+`API_KEY=local-dev-key`. Pure auth helpers (`check_api_key`) are unit-tested
+per language with constant-time comparison.
+
+If `API_KEY` is the empty string, auth is **disabled** — useful for the
+test suites but a misconfiguration for any real environment.
 
 ## Getting started
 
@@ -124,21 +138,28 @@ behind a single command and mirrors the production environment variables.
 # from the repository root
 docker compose up --build           # add -d to detach
 
-# in another terminal — verify each service is healthy
+# in another terminal — verify each service is healthy (no key needed for /health)
 curl http://localhost:8081/health   # JS      → {"status":"ok","lang":"js"}
 curl http://localhost:8082/health   # Python  → {"status":"ok","lang":"python"}
 curl http://localhost:8083/health   # C       → {"status":"ok","lang":"c"}
 curl http://localhost:8084/health   # C++     → {"status":"ok","lang":"cpp"}
 
+# /api/<lang>/* requires the X-API-Key header. docker-compose sets API_KEY=local-dev-key.
+KEY=local-dev-key
+
 # create a row through the JS service
 curl -X POST http://localhost:8081/api/js/data \
+     -H "X-API-Key: $KEY" \
      -H 'content-type: application/json' \
      -d '{"content":"hello world"}'
 # → {"item":{"id":1,"content":"hello world","created_at":"..."}}
 
 # list rows (first call → "source":"db", second call → "source":"cache")
-curl http://localhost:8081/api/js/data
-curl http://localhost:8081/api/js/data
+curl -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
+curl -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
+
+# without the key:
+curl -i http://localhost:8081/api/js/data   # → HTTP/1.1 401, {"error":"missing api key"}
 
 # tear everything down
 docker compose down                 # add -v to drop the Postgres volume too
@@ -169,6 +190,7 @@ PGPASSWORD=apppass psql -h 127.0.0.1 -U appuser -d appdb -f db/init.sql
 # 4. Set the env vars used by every language.
 export DB_HOST=127.0.0.1 DB_PORT=5432 DB_NAME=appdb DB_USER=appuser DB_PASSWORD=apppass
 export REDIS_HOST=127.0.0.1 REDIS_PORT=6379
+export API_KEY=local-dev-key   # required header value for /api/<lang>/*
 
 # 5. Run whichever app you want. Each listens on $PORT and answers /api/$APP_LANG/...
 # --- JavaScript ---
@@ -204,13 +226,13 @@ docker compose start redis            # or: sudo service redis-server start
 ## Running the test suite locally
 
 ```bash
-# JavaScript    (Jest + supertest)        41 tests
+# JavaScript    (Jest + supertest)        47 tests
 cd apps/js     && npm install && npm test
-# Python        (PyTest + httpx)          37 tests
+# Python        (PyTest + httpx)          44 tests
 cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
-# C             (Unity)                   16 tests
+# C             (Unity)                   21 tests
 cd apps/c      && make test
-# C++           (GoogleTest)              17 tests
+# C++           (GoogleTest)              22 tests
 cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
 ```
 
@@ -251,8 +273,8 @@ aws ecs update-service --cluster ml-ecs-benchmark --service ml-ecs-benchmark-js 
 After a deployment is live:
 
 ```bash
-BASE_URL=https://api.example.com ./benchmark/run_tests.sh
-BASE_URL=https://api.example.com ./benchmark/chaos_test.sh
+BASE_URL=https://api.example.com API_KEY=<the deployed key> ./benchmark/run_tests.sh
+BASE_URL=https://api.example.com API_KEY=<the deployed key> ./benchmark/chaos_test.sh
 ```
 
 `run_tests.sh` produces `results/summary-<timestamp>.csv` with per-language

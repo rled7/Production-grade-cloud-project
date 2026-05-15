@@ -26,7 +26,19 @@ app::Config load_config_from_env() {
     c.cache_ttl_seconds = app::env_int("CACHE_TTL_SECONDS", 30);
     c.redis_timeout_ms = app::env_int("REDIS_TIMEOUT_MS", 200);
     c.max_body_bytes = static_cast<std::size_t>(app::env_int("MAX_BODY_BYTES", 1048576));
+    c.api_key = app::env_str("API_KEY", "");
     return c;
+}
+
+crow::response auth_response(app::AuthStatus s) {
+    if (s == app::AuthStatus::Missing) {
+        crow::response r(401, R"({"error":"missing api key"})");
+        r.set_header("Content-Type", "application/json");
+        return r;
+    }
+    crow::response r(401, R"({"error":"invalid api key"})");
+    r.set_header("Content-Type", "application/json");
+    return r;
 }
 
 crow::response to_response(const app::HandlerResult& r) {
@@ -60,6 +72,10 @@ int main() {
     deps.app_lang = cfg.app_lang;
     deps.cache_ttl_seconds = cfg.cache_ttl_seconds;
     deps.max_body_bytes = cfg.max_body_bytes;
+    deps.api_key = cfg.api_key;
+    if (deps.api_key.empty()) {
+        std::cerr << "[warn] API_KEY env var is empty — auth is DISABLED.\n";
+    }
 
     crow::SimpleApp crow_app;
     crow_app.loglevel(crow::LogLevel::Warning);
@@ -74,6 +90,10 @@ int main() {
     CROW_ROUTE(crow_app, "/api/<string>/data")
         .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)
     ([&deps](const crow::request& req, std::string lang) {
+        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
+        if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
+            return auth_response(auth);
+        }
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
             r.set_header("Content-Type", "application/json");
@@ -89,7 +109,11 @@ int main() {
     // return 400 "invalid id" for non-positive-int rather than a generic 404.
     CROW_ROUTE(crow_app, "/api/<string>/data/<string>")
         .methods(crow::HTTPMethod::GET)
-    ([&deps](std::string lang, std::string id_str) {
+    ([&deps](const crow::request& req, std::string lang, std::string id_str) {
+        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
+        if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
+            return auth_response(auth);
+        }
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
             r.set_header("Content-Type", "application/json");

@@ -13,8 +13,10 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:?BASE_URL is required, e.g. https://api.example.com}"
+API_KEY="${API_KEY:?API_KEY is required (the value the services were deployed with)}"
 LANGUAGES="${LANGUAGES:-js python c cpp}"
 RATE_LIMIT_FLOOD="${RATE_LIMIT_FLOOD:-3000}" # requests for the rate-limit probe
+auth_hdr=(-H "X-API-Key: $API_KEY")
 fail=0
 
 expect_status() {
@@ -34,18 +36,21 @@ for lang in $LANGUAGES; do
 
     # 1. Malformed JSON → 400
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" \
+        "${auth_hdr[@]}" \
         -H 'content-type: application/json' \
         -d 'this is not json')
     expect_status "malformed JSON body" 400 "$code"
 
     # 2. Missing content field → 400
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" \
+        "${auth_hdr[@]}" \
         -H 'content-type: application/json' \
         -d '{}')
     expect_status "missing content field" 400 "$code"
 
     # 3. Empty content → 400
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" \
+        "${auth_hdr[@]}" \
         -H 'content-type: application/json' \
         -d '{"content":""}')
     expect_status "empty content" 400 "$code"
@@ -58,6 +63,7 @@ for lang in $LANGUAGES; do
         printf '"}'
     } > "$big_payload"
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" \
+        "${auth_hdr[@]}" \
         -H 'content-type: application/json' \
         --data-binary @"$big_payload")
     rm -f "$big_payload"
@@ -70,7 +76,7 @@ for lang in $LANGUAGES; do
 
     # 5. SQL-injection attempt — WAF should block (403) or app validates (400).
     inj_url="$BASE_URL/api/$lang/data/1%27%20OR%20%271%27%3D%271"
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$inj_url")
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${auth_hdr[@]}" "$inj_url")
     if [ "$code" = "403" ] || [ "$code" = "400" ]; then
         printf "  [OK]   %-40s got %s\n" "SQLi probe blocked/rejected" "$code"
     else
@@ -79,16 +85,24 @@ for lang in $LANGUAGES; do
     fi
 
     # 6. Invalid id (string) → 400
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/$lang/data/abc")
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${auth_hdr[@]}" "$BASE_URL/api/$lang/data/abc")
     expect_status "non-integer id" 400 "$code"
 
     # 7. Negative id → 400
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/$lang/data/-1")
+    code=$(curl -s -o /dev/null -w "%{http_code}" "${auth_hdr[@]}" "$BASE_URL/api/$lang/data/-1")
     expect_status "negative id" 400 "$code"
 
-    # 8. Health still passes after abuse
+    # 8. Missing API key → 401
+    code=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+    expect_status "no api key" 401 "$code"
+
+    # 9. Wrong API key → 401
+    code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: wrong" "$url")
+    expect_status "wrong api key" 401 "$code"
+
+    # 10. Health still passes after abuse — and stays unauthenticated.
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health")
-    expect_status "/health still 200" 200 "$code"
+    expect_status "/health still 200 (no auth needed)" 200 "$code"
 done
 
 echo
@@ -101,13 +115,13 @@ codes_file="$(mktemp)"
 trap 'rm -f "$codes_file"' EXIT
 
 for _ in $(seq 1 "$RATE_LIMIT_FLOOD"); do
-    curl -s -o /dev/null -w "%{http_code}\n" "$url" &
+    curl -s -o /dev/null -w "%{http_code}\n" "${auth_hdr[@]}" "$url" &
 done
 wait
 echo "(parallel curls done; counting codes that arrived)"
 # Re-run a small sequential burst to actually capture the 403 wave reliably.
 for _ in $(seq 1 200); do
-    curl -s -o /dev/null -w "%{http_code}\n" "$url"
+    curl -s -o /dev/null -w "%{http_code}\n" "${auth_hdr[@]}" "$url"
 done >> "$codes_file"
 
 blocked=$(grep -c '^403' "$codes_file" || true)

@@ -64,3 +64,14 @@ Timestamps are UTC, recorded at phase completion.
 - [x] BENCHMARK_RESULTS.md (stub — to be filled after a live run) - 2026-05-15 02:00 UTC
 - [x] Polish README.md with architecture diagram - 2026-05-15 02:00 UTC
 - [x] Seal CHANGELOG.md as [1.0.0] - Production Ready - 2026-05-15 02:00 UTC
+
+## Post-1.0: API-Key Authentication
+- [x] JS middleware in createApp + 6 new tests - 2026-05-15 18:00 UTC
+- [x] Python middleware in create_app + 7 new tests - 2026-05-15 18:00 UTC
+- [x] C check_api_key + dispatch guard + 5 new Unity tests - 2026-05-15 18:00 UTC
+- [x] C++ check_api_key + Crow route guard + 5 new GoogleTest tests - 2026-05-15 18:00 UTC
+- [x] ECS Terraform: API_KEY injected via Secrets Manager - 2026-05-15 18:00 UTC
+- [x] Root tfvars.example: api_key variable - 2026-05-15 18:00 UTC
+- [x] docker-compose.yml: API_KEY=local-dev-key on all services - 2026-05-15 18:00 UTC
+- [x] Benchmark + chaos scripts: X-API-Key + no-key/wrong-key probes - 2026-05-15 18:00 UTC
+- [x] README + CHANGELOG (1.1.0) updates - 2026-05-15 18:00 UTC

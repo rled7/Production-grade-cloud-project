@@ -111,7 +111,7 @@ class BrokenCache:
 
 # ---------- Fixtures ----------
 
-def make_config(lang: str = "python", max_body: int = 1024) -> Config:
+def make_config(lang: str = "python", max_body: int = 1024, api_key: str = "") -> Config:
     return Config(
         port=8080,
         app_lang=lang,
@@ -125,6 +125,7 @@ def make_config(lang: str = "python", max_body: int = 1024) -> Config:
         cache_ttl_seconds=30,
         redis_timeout_ms=200,
         max_body_bytes=max_body,
+        api_key=api_key,
     )
 
 
@@ -346,3 +347,80 @@ def test_post_with_redis_outage_still_succeeds(fake_db):
         assert r.json()["item"]["content"] == "hi"
     # cache delete was attempted (and silently swallowed)
     assert broken.delete_calls >= 1
+
+
+# ---------- API-key auth ----------
+
+API_KEY = "test-key-abc123"
+
+
+def test_health_works_without_api_key(fake_db, fake_cache):
+    """ALB health-check path is exempt from auth."""
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
+    with TestClient(app) as c:
+        r = c.get("/health")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok", "lang": "python"}
+
+
+def test_data_route_returns_401_without_key(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
+    with TestClient(app) as c:
+        r = c.get("/api/python/data")
+        assert r.status_code == 401
+        assert r.json() == {"error": "missing api key"}
+
+
+def test_data_route_returns_401_with_wrong_key(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
+    with TestClient(app) as c:
+        r = c.get("/api/python/data", headers={"X-API-Key": "nope"})
+        assert r.status_code == 401
+        assert r.json() == {"error": "invalid api key"}
+
+
+def test_data_route_returns_200_with_correct_key(fake_db, fake_cache):
+    fake_db.items.append(
+        DataItem(id=1, content="x", created_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    )
+    fake_db._next_id = 2
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
+    with TestClient(app) as c:
+        r = c.get("/api/python/data", headers={"X-API-Key": API_KEY})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["source"] == "db"
+        assert len(body["items"]) == 1
+
+
+def test_post_data_also_requires_key(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
+    with TestClient(app) as c:
+        r1 = c.post("/api/python/data", json={"content": "hi"})
+        assert r1.status_code == 401
+        r2 = c.post(
+            "/api/python/data",
+            json={"content": "hi"},
+            headers={"X-API-Key": API_KEY},
+        )
+        assert r2.status_code == 201
+
+
+def test_empty_api_key_disables_auth(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=""))
+    with TestClient(app) as c:
+        r = c.get("/api/python/data")
+        assert r.status_code == 200
+
+
+def test_api_key_override_param_overrides_config(fake_db, fake_cache):
+    # config has empty key, but the explicit create_app(api_key=...) wins.
+    app = create_app(
+        db=fake_db,
+        cache=fake_cache,
+        config=make_config(api_key=""),
+        api_key=API_KEY,
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/python/data")
+        assert r.status_code == 401

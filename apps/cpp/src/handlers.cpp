@@ -31,6 +31,19 @@ bool validate_content_nonempty(const std::string& s) {
     return !s.empty();
 }
 
+AuthStatus check_api_key(const std::string& presented, const std::string& expected) {
+    if (expected.empty()) return AuthStatus::Disabled;
+    if (presented.empty()) return AuthStatus::Missing;
+    if (presented.size() != expected.size()) return AuthStatus::Invalid;
+    // constant-time compare
+    unsigned char diff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        diff |= static_cast<unsigned char>(presented[i]) ^
+                static_cast<unsigned char>(expected[i]);
+    }
+    return diff == 0 ? AuthStatus::Ok : AuthStatus::Invalid;
+}
+
 std::string json_escape(std::string_view in) {
     std::string out;
     out.reserve(in.size() + 8);

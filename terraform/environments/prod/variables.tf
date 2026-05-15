@@ -82,6 +82,12 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "api_key" {
+  description = "API key required on the X-API-Key header for every /api/<lang>/* route. Stored in Secrets Manager. Keep this in terraform.tfvars (gitignored)."
+  type        = string
+  sensitive   = true
+}
+
 variable "db_instance_class" {
   description = "RDS instance class."
   type        = string

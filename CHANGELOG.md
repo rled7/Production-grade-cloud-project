@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] - 2026-05-15
+
+### Added — API-key authentication
+- New `check_api_key` pure helper in all four languages with constant-time
+  comparison; AUTH_OK / AUTH_MISSING / AUTH_INVALID / AUTH_DISABLED states.
+- Every `/api/<lang>/*` route now requires the `X-API-Key` header. Missing →
+  401 `{"error":"missing api key"}`; wrong → 401 `{"error":"invalid api key"}`.
+- `/health` stays public (ALB target-group health check).
+- ECS Terraform module: the existing Secrets Manager secret now stores both
+  `DB_PASSWORD` and `API_KEY`; both are injected into every task definition's
+  `secrets` block. Renamed the secret to `${project_name}-app-secrets`.
+- Root `terraform/environments/prod` and `terraform.tfvars.example` gained an
+  `api_key` variable.
+- `docker-compose.yml` sets `API_KEY=local-dev-key` on every service.
+- `benchmark/run_tests.sh` and `benchmark/chaos_test.sh` now require
+  `API_KEY` and forward `X-API-Key` on every probe; chaos suite gained two
+  new checks: no-key → 401, wrong-key → 401.
+- 23 new unit/integration tests across the four languages (134 total,
+  up from 111).
+
 ## [1.0.0] - Production Ready - 2026-05-15
 
 ### Phase 0 — Project Setup, State & Tracking

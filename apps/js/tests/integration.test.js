@@ -114,6 +114,7 @@ function buildApp(overrides = {}) {
     cache,
     lang: overrides.lang || 'js',
     maxBodyBytes: overrides.maxBodyBytes || 1024, // small for size tests
+    apiKey: overrides.apiKey !== undefined ? overrides.apiKey : '',
   });
   return { app, db, cache };
 }
@@ -364,5 +365,62 @@ describe('content-type discipline', () => {
     ]) {
       expect(r.headers['content-type']).toMatch(/application\/json/);
     }
+  });
+});
+
+describe('API key auth', () => {
+  const KEY = 'test-key-abc123';
+
+  test('GET /health works without an API key (ALB health check stays public)', async () => {
+    const { app } = buildApp({ apiKey: KEY });
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'ok', lang: 'js' });
+  });
+
+  test('data routes return 401 with no key', async () => {
+    const { app } = buildApp({ apiKey: KEY });
+    const res = await request(app).get('/api/js/data');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'missing api key' });
+  });
+
+  test('data routes return 401 with a wrong key', async () => {
+    const { app } = buildApp({ apiKey: KEY });
+    const res = await request(app).get('/api/js/data').set('X-API-Key', 'nope');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'invalid api key' });
+  });
+
+  test('data routes return 200 with the right key', async () => {
+    const { app } = buildApp({ apiKey: KEY, initialRows: [
+      { id: 1, content: 'x', created_at: '2024-01-01T00:00:00Z' },
+    ]});
+    const res = await request(app).get('/api/js/data').set('X-API-Key', KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.source).toBe('db');
+    expect(res.body.items.length).toBe(1);
+  });
+
+  test('POST /api/js/data also requires the key', async () => {
+    const { app } = buildApp({ apiKey: KEY });
+    const r1 = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .send('{"content":"hi"}');
+    expect(r1.status).toBe(401);
+
+    const r2 = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .set('X-API-Key', KEY)
+      .send('{"content":"hi"}');
+    expect(r2.status).toBe(201);
+  });
+
+  test('an empty apiKey disables auth entirely', async () => {
+    const { app } = buildApp({ apiKey: '' });
+    const res = await request(app).get('/api/js/data');
+    expect(res.status).toBe(200);
   });
 });

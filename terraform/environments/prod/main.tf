@@ -122,6 +122,7 @@ module "ecs" {
   db_name     = var.db_name
   db_username = var.db_username
   db_password = var.db_password
+  api_key     = var.api_key
 
   redis_host = module.elasticache.redis_endpoint
   redis_port = module.elasticache.redis_port
