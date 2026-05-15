@@ -102,29 +102,115 @@ Edge cases (each app must satisfy all of these — covered by unit + integration
 - Postgres down → **503** with JSON error; process stays alive and reconnects.
 - Invalid id (non-positive integer) → **400**.
 
-## Local development
+## Getting started
+
+There are two supported ways to bring the stack up locally. The Docker path
+is recommended — it spins up Postgres, Redis, and all four language services
+behind a single command and mirrors the production environment variables.
+
+### Prerequisites
+
+- **Docker path** (recommended): Docker 20.10+ with the Compose v2 plugin.
+- **Native path**: PostgreSQL 14+ and Redis 6+ running locally, plus the
+  toolchain for whichever language you want to run (Node 20, Python 3.12,
+  `build-essential` + `libpq-dev` + `libhiredis-dev` for C, the same plus
+  `cmake` + `libpqxx-dev` for C++).
+- **Network**: the default ports 5432 (Postgres), 6379 (Redis), and 8081-8084
+  (per-language apps) must be free.
+
+### Quick start — `docker compose` (all four services + Postgres + Redis)
 
 ```bash
-docker compose up --build
-curl http://localhost:8081/health                            # JS
-curl http://localhost:8082/api/python/data
-curl -X POST http://localhost:8083/api/c/data \
-     -H 'content-type: application/json' -d '{"content":"hi"}'
-curl http://localhost:8084/api/cpp/data
+# from the repository root
+docker compose up --build           # add -d to detach
+
+# in another terminal — verify each service is healthy
+curl http://localhost:8081/health   # JS      → {"status":"ok","lang":"js"}
+curl http://localhost:8082/health   # Python  → {"status":"ok","lang":"python"}
+curl http://localhost:8083/health   # C       → {"status":"ok","lang":"c"}
+curl http://localhost:8084/health   # C++     → {"status":"ok","lang":"cpp"}
+
+# create a row through the JS service
+curl -X POST http://localhost:8081/api/js/data \
+     -H 'content-type: application/json' \
+     -d '{"content":"hello world"}'
+# → {"item":{"id":1,"content":"hello world","created_at":"..."}}
+
+# list rows (first call → "source":"db", second call → "source":"cache")
+curl http://localhost:8081/api/js/data
+curl http://localhost:8081/api/js/data
+
+# tear everything down
+docker compose down                 # add -v to drop the Postgres volume too
 ```
 
-Ports: 8081=js, 8082=python, 8083=c, 8084=cpp. Postgres on 5432, Redis on 6379.
+Port map: 8081 = JS, 8082 = Python, 8083 = C, 8084 = C++. Postgres on 5432, Redis on 6379. All four apps share the same Postgres database and the same Redis instance, so rows you create through one language are immediately visible to the others. Each app runs `CREATE TABLE IF NOT EXISTS` on startup, so no manual migration step is needed.
+
+### Native path — running a single service without Docker
+
+Useful when iterating on one language. Start Postgres and Redis manually,
+create the database/user, then export the env vars and run the app.
+
+```bash
+# 1. Start Postgres + Redis (commands depend on your distro/OS package).
+sudo service postgresql start
+sudo service redis-server start
+
+# 2. Create the database + user the apps expect.
+sudo -u postgres psql <<'SQL'
+CREATE USER appuser WITH PASSWORD 'apppass';
+CREATE DATABASE appdb OWNER appuser;
+GRANT ALL PRIVILEGES ON DATABASE appdb TO appuser;
+SQL
+
+# 3. Apply the schema (apps also create the table on startup; this is just optional).
+PGPASSWORD=apppass psql -h 127.0.0.1 -U appuser -d appdb -f db/init.sql
+
+# 4. Set the env vars used by every language.
+export DB_HOST=127.0.0.1 DB_PORT=5432 DB_NAME=appdb DB_USER=appuser DB_PASSWORD=apppass
+export REDIS_HOST=127.0.0.1 REDIS_PORT=6379
+
+# 5. Run whichever app you want. Each listens on $PORT and answers /api/$APP_LANG/...
+# --- JavaScript ---
+cd apps/js && npm install
+PORT=8081 APP_LANG=js node src/server.js
+
+# --- Python ---
+cd apps/python && python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+PORT=8082 APP_LANG=python python -m uvicorn app.main:app --host 0.0.0.0 --port 8082
+
+# --- C ---
+cd apps/c && make server
+PORT=8083 APP_LANG=c ./server
+
+# --- C++ ---
+cd apps/cpp && cmake -S . -B build && cmake --build build --target server -j
+PORT=8084 APP_LANG=cpp ./build/server
+```
+
+### Verifying the Redis-down fallback
+
+The contract says reads must keep returning **200** even if Redis is down.
+You can prove this against a running stack:
+
+```bash
+# with the apps up, stop redis and confirm reads still succeed
+docker compose stop redis             # or: sudo service redis-server stop
+curl -i http://localhost:8081/api/js/data   # → HTTP/1.1 200 OK, "source":"db"
+docker compose start redis            # or: sudo service redis-server start
+```
 
 ## Running the test suite locally
 
 ```bash
-# JavaScript
+# JavaScript    (Jest + supertest)        41 tests
 cd apps/js     && npm install && npm test
-# Python
+# Python        (PyTest + httpx)          37 tests
 cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
-# C
+# C             (Unity)                   16 tests
 cd apps/c      && make test
-# C++
+# C++           (GoogleTest)              17 tests
 cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
 ```
 
