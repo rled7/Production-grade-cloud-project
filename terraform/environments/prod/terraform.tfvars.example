@@ -1,0 +1,25 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored.
+
+project_name = "ml-ecs-benchmark"
+aws_region   = "us-east-1"
+
+# Public-facing endpoint. ACM cert is created and validated against this name
+# via the Route53 zone below. The ALB gets a Route53 A-record alias here.
+domain_name     = "api.example.com"
+route53_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# Database
+db_name     = "appdb"
+db_username = "appuser"
+db_password = "CHANGE-ME-USE-A-STRONG-PASSWORD"
+
+# Optional sizing overrides
+# db_instance_class = "db.t3.micro"
+# db_multi_az       = true
+# redis_node_type   = "cache.t3.micro"
+# desired_count     = 2
+# task_cpu          = "256"
+# task_memory       = "512"
+# image_tag         = "latest"
+# waf_rate_limit    = 2000

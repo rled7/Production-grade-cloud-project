@@ -1,0 +1,134 @@
+# Local development stack: all four language services + Postgres + Redis.
+# Mirrors production: same env vars, same /api/<lang> routing.
+#
+# Usage:
+#   docker compose up --build
+#   curl http://localhost:8081/health   # JS
+#   curl http://localhost:8082/health   # Python
+#   curl http://localhost:8083/health   # C
+#   curl http://localhost:8084/health   # C++
+#   curl -X POST http://localhost:8081/api/js/data \
+#        -H 'content-type: application/json' -d '{"content":"hello"}'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  js:
+    build: ./apps/js
+    environment:
+      PORT: "8080"
+      APP_LANG: "js"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  python:
+    build: ./apps/python
+    environment:
+      PORT: "8080"
+      APP_LANG: "python"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  c:
+    build: ./apps/c
+    environment:
+      PORT: "8080"
+      APP_LANG: "c"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+    ports:
+      - "8083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  cpp:
+    build: ./apps/cpp
+    environment:
+      PORT: "8080"
+      APP_LANG: "cpp"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+    ports:
+      - "8084:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

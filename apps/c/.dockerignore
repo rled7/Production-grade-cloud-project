@@ -1,0 +1,6 @@
+tests/
+*.o
+server
+test_handlers
+.git
+.gitignore

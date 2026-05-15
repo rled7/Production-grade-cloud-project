@@ -1,0 +1,6 @@
+# Trivy ignore list — record exact vuln IDs (CVE-XXXX-YYYYY) here when a
+# finding has been triaged and accepted as a known-but-tolerated risk.
+# Keep entries time-bounded and link the rationale.
+#
+# Example:
+# CVE-2024-12345  # libfoo: false positive on bookworm-slim, fixed upstream in libfoo 1.4 (track here, remove once base image catches up)

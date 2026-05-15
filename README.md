@@ -1,2 +1,195 @@
-# Production-grade-cloud-project
-Cloud project 
+# Advanced Multi-Language AWS ECS Benchmark & Testing Suite
+
+A production-grade reference architecture that runs the **same REST API in four
+languages** — JavaScript, Python, pure C, and pure C++ — side-by-side on AWS
+Fargate behind a single ALB, then load- and chaos-tests them so you can compare
+runtime characteristics on identical workloads.
+
+The four implementations share an identical contract: same endpoints, same
+Postgres schema, same Redis cache-aside semantics, same edge-case behaviour.
+Differences in measured throughput and tail latency therefore measure the
+runtime / framework, not the design.
+
+## Architecture
+
+```
+              ┌─────────────────────────────────────────────────────┐
+              │                       Internet                       │
+              └────────────────────────┬─────────────────────────────┘
+                                       │
+                                  ┌────▼────┐
+                                  │  WAF v2 │  (managed SQLi + Common
+                                  │  Web ACL│   + rate-based rule)
+                                  └────┬────┘
+                                       │
+                  Route53 ALIAS  ┌─────▼─────┐
+                  api.example.com│    ALB    │   80 → 301 → 443 (ACM/TLS 1.3)
+                                 │ (public)  │
+                                 └─────┬─────┘
+                                       │ path-routing
+            ┌────────────┬─────────────┼─────────────┬────────────┐
+       /api/js/*    /api/python/*  /api/c/*     /api/cpp/*
+            │            │              │             │
+       ┌────▼───┐   ┌────▼───┐    ┌────▼───┐    ┌────▼───┐
+       │TG js   │   │TG python│    │TG c    │    │TG cpp  │
+       └────┬───┘   └────┬───┘    └────┬───┘    └────┬───┘
+            │            │              │             │
+       ┌────▼─────────────────────────────────────────▼────┐
+       │       ECS Fargate cluster (private subnets)        │
+       │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐      │
+       │  │ js x N │ │ py x N │ │ c x N  │ │ cpp xN │      │ ← CPU autoscale
+       │  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘      │
+       └───────┼──────────┼──────────┼──────────┼──────────┘
+               │          │          │          │
+               └──────┬───┴──────────┴──────┬───┘
+                      ▼                      ▼
+              ┌───────────────┐      ┌──────────────────┐
+              │  Postgres RDS │      │ ElastiCache Redis│
+              │  (Multi-AZ,   │      │  (private)       │
+              │   private)    │      │                  │
+              └───────────────┘      └──────────────────┘
+
+       Secrets Manager  → DB credentials  → ECS task definitions
+       CloudWatch Logs  → /ecs/<project>/<lang>
+       CloudWatch Dashboard → CPU, memory, request rate, 5XX, latency
+```
+
+## Repository layout
+
+```
+apps/
+  js/        Node.js + Express    (Jest tests)
+  python/    FastAPI + Uvicorn    (pytest tests)
+  c/         mongoose + libpq + hiredis  (Unity tests)
+  cpp/       Crow + libpqxx + hiredis    (GoogleTest tests)
+db/init.sql                 shared schema (also runs CREATE TABLE IF NOT EXISTS at app startup)
+docker-compose.yml          local stack: 4 apps + Postgres + Redis
+terraform/
+  modules/
+    vpc/                    2-AZ VPC, 2 public + 2 private subnets, NATs
+    security-groups/        tight ALB/ECS/RDS/Redis SGs
+    rds/                    Postgres (Multi-AZ, encrypted)
+    elasticache/            Redis
+    waf/                    WAFv2 Web ACL (SQLi + Common + rate-limit)
+    alb/                    ALB, 4 target groups, HTTP→HTTPS + ACM, listener rules
+    ecs/                    cluster, ECR repos, task defs, services, autoscale, Secrets Manager
+    monitoring/             CloudWatch dashboard + alarms
+  environments/prod/        root composition wiring every module
+  scripts/setup-backend.sh  bootstraps S3 + DynamoDB for remote state
+benchmark/
+  run_tests.sh              k6 load test (per-language)
+  chaos_test.sh             malformed/oversized/SQLi/rate-limit probes
+security/.trivyignore       accepted-finding allowlist
+.github/workflows/deploy.yml  test → Trivy → build → push → roll
+CHANGELOG.md, TRACKER.md, BENCHMARK_RESULTS.md
+```
+
+## REST contract (identical for all four services)
+
+| Method | Path                       | Behaviour                                                                 |
+|--------|----------------------------|---------------------------------------------------------------------------|
+| GET    | `/health`                  | Liveness — no DB/cache calls. Used by the ALB target group health check. |
+| GET    | `/api/<lang>/data`         | List all rows (cache-aside on `data:all`).                                |
+| GET    | `/api/<lang>/data/<id>`    | Get one row (cache-aside on `data:<id>`).                                 |
+| POST   | `/api/<lang>/data`         | Insert `{"content":"..."}`; invalidate `data:all`.                        |
+
+Edge cases (each app must satisfy all of these — covered by unit + integration tests):
+
+- Malformed JSON body → **400**.
+- Missing/empty `content` → **400**.
+- Body > `MAX_BODY_BYTES` → **413**.
+- Redis down / timed out → **200**, `"source":"db"` (never 5xx because of Redis).
+- Postgres down → **503** with JSON error; process stays alive and reconnects.
+- Invalid id (non-positive integer) → **400**.
+
+## Local development
+
+```bash
+docker compose up --build
+curl http://localhost:8081/health                            # JS
+curl http://localhost:8082/api/python/data
+curl -X POST http://localhost:8083/api/c/data \
+     -H 'content-type: application/json' -d '{"content":"hi"}'
+curl http://localhost:8084/api/cpp/data
+```
+
+Ports: 8081=js, 8082=python, 8083=c, 8084=cpp. Postgres on 5432, Redis on 6379.
+
+## Running the test suite locally
+
+```bash
+# JavaScript
+cd apps/js     && npm install && npm test
+# Python
+cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
+# C
+cd apps/c      && make test
+# C++
+cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
+```
+
+The CI pipeline (`.github/workflows/deploy.yml`) runs all four suites plus
+`terraform validate`/`fmt -check` plus Trivy filesystem and IaC scans, and
+**blocks image build/push if any of them fails**.
+
+## Deploying
+
+```bash
+# 1. One-time: bootstrap the remote state backend.
+./terraform/scripts/setup-backend.sh ml-ecs-benchmark us-east-1
+
+# 2. Update the backend block in terraform/environments/prod/providers.tf with
+#    the bucket and table names printed by the script.
+
+# 3. Fill terraform.tfvars (gitignored) from the example.
+cp terraform/environments/prod/terraform.tfvars.example \
+   terraform/environments/prod/terraform.tfvars
+$EDITOR terraform/environments/prod/terraform.tfvars
+#    - domain_name + route53_zone_id MUST be set (ACM cert is DNS-validated).
+#    - db_password MUST be set.
+
+# 4. Apply.
+cd terraform/environments/prod
+terraform init
+terraform apply
+
+# 5. Push container images. On main, CI does this automatically. For an
+#    initial bootstrap, `docker build && docker push` against the ECR repo
+#    URLs in `terraform output ecr_repository_urls`, then roll the services:
+aws ecs update-service --cluster ml-ecs-benchmark --service ml-ecs-benchmark-js  --force-new-deployment
+# ...repeat for python, c, cpp.
+```
+
+## Running the benchmark and chaos suite
+
+After a deployment is live:
+
+```bash
+BASE_URL=https://api.example.com ./benchmark/run_tests.sh
+BASE_URL=https://api.example.com ./benchmark/chaos_test.sh
+```
+
+`run_tests.sh` produces `results/summary-<timestamp>.csv` with per-language
+throughput and p95/p99 latency. `chaos_test.sh` verifies edge-case handling
+and that the WAF rate limit actually fires.
+
+Paste the numbers into `BENCHMARK_RESULTS.md`.
+
+## Security posture
+
+- **Network:** RDS, ElastiCache, and every ECS task live in private subnets.
+  Only the ALB is internet-facing.
+- **Security groups:** ALB → ECS only; ECS → RDS:5432 only; ECS → Redis:6379 only.
+- **TLS:** ACM-issued certificate; ALB serves only TLS 1.3 (`ELBSecurityPolicy-TLS13-1-2-2021-06`);
+  HTTP 80 redirects to HTTPS 443.
+- **WAF:** AWS managed Common rules + SQLi rules + a rate-based rule.
+- **Secrets:** DB password lives in AWS Secrets Manager and is injected into
+  task definitions via the `secrets` block; never baked into the image.
+- **CI gate:** Trivy filesystem, IaC, and image scans must pass before push.
+  S3 state bucket is versioned, encrypted, and public-access-blocked.
+
+## Tracking
+
+- [`TRACKER.md`](TRACKER.md) — phase-by-phase task checklist with UTC timestamps.
+- [`CHANGELOG.md`](CHANGELOG.md) — semantic-versioned change log; currently 1.0.0.
+- [`BENCHMARK_RESULTS.md`](BENCHMARK_RESULTS.md) — to be filled after a live run.
