@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#include "access_log.h"
+#include "auth.h"
 
 /* ---------- Pure helpers ---------- */
 
@@ -185,6 +189,26 @@ static void reply_json(struct mg_connection *c, int code, const char *body,
                        size_t body_len) {
     mg_http_reply(c, code, "Content-Type: application/json\r\n",
                   "%.*s", (int) body_len, body);
+}
+
+static void reply_json_with_cookie(struct mg_connection *c, int code,
+                                   const char *body, size_t body_len,
+                                   const char *cookie_hdr) {
+    char headers[1024];
+    snprintf(headers, sizeof(headers),
+             "Content-Type: application/json\r\nSet-Cookie: %s\r\n",
+             cookie_hdr);
+    mg_http_reply(c, code, headers, "%.*s", (int) body_len, body);
+}
+
+/* Build a Set-Cookie line for the session cookie. Caller-owned buffer. */
+static int build_session_cookie(char *buf, size_t cap,
+                                const char *token, size_t token_len,
+                                bool secure, int max_age) {
+    return snprintf(buf, cap,
+                    "session=%.*s; HttpOnly; SameSite=Strict; Path=/; Max-Age=%d%s",
+                    (int) token_len, token, max_age,
+                    secure ? "; Secure" : "");
 }
 
 static void reply_error(struct mg_connection *c, int code, const char *msg) {
@@ -393,6 +417,205 @@ static void handle_create(struct mg_connection *c, app_ctx_t *app,
     sb_free(&resp);
 }
 
+/* ---------- Auth helpers ---------- */
+
+/* Current user info parsed out of a verified JWT payload. */
+typedef struct {
+    bool   present;
+    long   id;
+    char   email[256];
+    char   roles_json[256]; /* raw JSON array */
+} current_user_t;
+
+static void parse_user_from_payload(const char *payload, current_user_t *u) {
+    memset(u, 0, sizeof(*u));
+    if (!payload) return;
+    /* "sub":"<id>" */
+    const char *sub = strstr(payload, "\"sub\"");
+    if (sub) {
+        const char *q = strchr(sub, '"');                  /* "sub" */
+        if (q) q = strchr(q + 1, '"');
+        if (q) q = strchr(q + 1, '"');                     /* opening " of value */
+        if (q) {
+            const char *e = strchr(q + 1, '"');
+            if (e) {
+                size_t n = (size_t) (e - q - 1);
+                char tmp[64];
+                if (n < sizeof(tmp)) {
+                    memcpy(tmp, q + 1, n);
+                    tmp[n] = '\0';
+                    u->id = strtol(tmp, NULL, 10);
+                }
+            }
+        }
+    }
+    /* "email":"..." */
+    const char *em = strstr(payload, "\"email\"");
+    if (em) {
+        const char *q = strchr(em, ':');
+        if (q) {
+            const char *o = strchr(q, '"');
+            if (o) {
+                const char *e = strchr(o + 1, '"');
+                if (e) {
+                    size_t n = (size_t) (e - o - 1);
+                    if (n < sizeof(u->email)) {
+                        memcpy(u->email, o + 1, n);
+                        u->email[n] = '\0';
+                    }
+                }
+            }
+        }
+    }
+    /* "roles":[...]   we copy the raw array slice */
+    const char *rl = strstr(payload, "\"roles\"");
+    if (rl) {
+        const char *colon = strchr(rl, ':');
+        if (colon) {
+            const char *o = strchr(colon, '[');
+            const char *e = o ? strchr(o, ']') : NULL;
+            if (o && e && (size_t) (e - o + 1) < sizeof(u->roles_json)) {
+                memcpy(u->roles_json, o, (size_t) (e - o + 1));
+                u->roles_json[e - o + 1] = '\0';
+            }
+        }
+    }
+    u->present = (u->id > 0);
+}
+
+static bool extract_current_user(struct mg_http_message *hm, const char *secret,
+                                 current_user_t *u) {
+    memset(u, 0, sizeof(*u));
+    if (!secret || !*secret) return false;
+    struct mg_str *ch = mg_http_get_header(hm, "Cookie");
+    if (!ch || ch->len == 0) return false;
+    char token[2048];
+    int tn = cookie_get_session(ch->buf, ch->len, token, sizeof(token));
+    if (tn < 0) return false;
+    char payload[1024];
+    if (jwt_verify_hs256(token, (size_t) tn, secret, strlen(secret),
+                         (long long) time(NULL),
+                         payload, sizeof(payload)) != 0) {
+        return false;
+    }
+    parse_user_from_payload(payload, u);
+    return u->present;
+}
+
+/* ---------- Auth route handlers ---------- */
+
+static void handle_login(struct mg_connection *c, app_ctx_t *app,
+                         struct mg_http_message *hm) {
+    if (hm->body.len > app->max_body_bytes) {
+        reply_error(c, 413, "payload too large"); return;
+    }
+    if (mg_json_get(hm->body, "$", NULL) < 0) {
+        reply_error(c, 400, "malformed json"); return;
+    }
+    char *email = mg_json_get_str(hm->body, "$.email");
+    char *password = mg_json_get_str(hm->body, "$.password");
+    if (!email || !*email || !password || !*password) {
+        free(email); free(password);
+        reply_error(c, 400, "email and password are required"); return;
+    }
+
+    db_user_t user = (db_user_t){0};
+    db_status_t st = db_find_user_by_email(app->db, email, &user);
+    free(email);
+    if (st == DB_UNAVAILABLE) {
+        free(password); reply_error(c, 503, "database unavailable"); return;
+    }
+    if (st == DB_NOT_FOUND) {
+        free(password); reply_error(c, 401, "invalid credentials"); return;
+    }
+    if (st != DB_OK) {
+        free(password); reply_error(c, 500, "internal"); return;
+    }
+
+    bool ok = bcrypt_verify(password, user.password_hash);
+    free(password);
+    if (!ok) {
+        db_user_free(&user);
+        reply_error(c, 401, "invalid credentials"); return;
+    }
+
+    if (!app->jwt_secret || !*app->jwt_secret) {
+        db_user_free(&user);
+        reply_error(c, 500, "auth not configured"); return;
+    }
+
+    /* Build payload JSON: {"sub":"<id>","email":"...","roles":[...],"iat":N,"exp":N+3600} */
+    long long now = (long long) time(NULL);
+    char payload[1024];
+    /* email may contain special chars but bcrypt-stored email + DB-provided
+     * email is trusted (we just queried it). Still escape it. */
+    char email_esc[512];
+    int en = json_escape(user.email, strlen(user.email), email_esc, sizeof(email_esc));
+    if (en < 0) { db_user_free(&user); reply_error(c, 500, "internal"); return; }
+    int pn = snprintf(payload, sizeof(payload),
+        "{\"sub\":\"%ld\",\"email\":\"%s\",\"roles\":%s,\"iat\":%lld,\"exp\":%lld}",
+        user.id, email_esc, user.roles_json[0] ? user.roles_json : "[]",
+        now, now + 3600);
+    if (pn < 0 || (size_t) pn >= sizeof(payload)) {
+        db_user_free(&user); reply_error(c, 500, "internal"); return;
+    }
+
+    char token[2048];
+    int tn = jwt_sign_hs256(payload, (size_t) pn, app->jwt_secret,
+                            strlen(app->jwt_secret), token, sizeof(token));
+    if (tn < 0) { db_user_free(&user); reply_error(c, 500, "internal"); return; }
+
+    char cookie_hdr[2400];
+    int ch = build_session_cookie(cookie_hdr, sizeof(cookie_hdr),
+                                  token, (size_t) tn, app->cookie_secure, 3600);
+    if (ch < 0 || (size_t) ch >= sizeof(cookie_hdr)) {
+        db_user_free(&user); reply_error(c, 500, "internal"); return;
+    }
+
+    /* Response body */
+    sb_t body;
+    sb_init(&body);
+    sb_append_cstr(&body, "{\"user\":{\"id\":");
+    sb_append_long(&body, user.id);
+    sb_append_cstr(&body, ",\"email\":");
+    sb_append_quoted(&body, user.email, strlen(user.email));
+    sb_append_cstr(&body, ",\"roles\":");
+    sb_append_cstr(&body, user.roles_json[0] ? user.roles_json : "[]");
+    sb_append_cstr(&body, "}}");
+    db_user_free(&user);
+
+    if (!body.oom) {
+        reply_json_with_cookie(c, 200, body.data, body.len, cookie_hdr);
+    } else {
+        reply_error(c, 500, "internal");
+    }
+    sb_free(&body);
+}
+
+static void handle_logout(struct mg_connection *c, app_ctx_t *app) {
+    char cookie_hdr[256];
+    snprintf(cookie_hdr, sizeof(cookie_hdr),
+             "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0%s",
+             app->cookie_secure ? "; Secure" : "");
+    mg_http_reply(c, 204,
+                  "Content-Type: application/json\r\nSet-Cookie: %s\r\n",
+                  cookie_hdr, "");
+}
+
+static void handle_me(struct mg_connection *c, const current_user_t *u) {
+    sb_t body; sb_init(&body);
+    sb_append_cstr(&body, "{\"user\":{\"id\":");
+    sb_append_long(&body, u->id);
+    sb_append_cstr(&body, ",\"email\":");
+    sb_append_quoted(&body, u->email, strlen(u->email));
+    sb_append_cstr(&body, ",\"roles\":");
+    sb_append_cstr(&body, u->roles_json[0] ? u->roles_json : "[]");
+    sb_append_cstr(&body, "}}");
+    if (!body.oom) reply_json(c, 200, body.data, body.len);
+    else reply_error(c, 500, "internal");
+    sb_free(&body);
+}
+
 /* ---------- Dispatch ---------- */
 
 void handle_request(struct mg_connection *c, struct mg_http_message *hm,
@@ -430,15 +653,46 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
         }
     }
 
-    /* /api/<lang>/data and /api/<lang>/data/<id> */
+    /* /api/<lang>/* */
     if (!path_has_prefix(path, plen, app->api_prefix, app->api_prefix_len)) {
         reply_error(c, 404, "not found");
         return;
     }
 
-    /* sub-path after prefix, e.g. "/data" or "/data/42" */
     const char *sub = path + app->api_prefix_len;
     size_t sublen = plen - app->api_prefix_len;
+
+    /* /auth/login (POST) — does NOT require JWT */
+    if (sublen == 11 && memcmp(sub, "/auth/login", 11) == 0) {
+        if (mlen == 4 && memcmp(meth, "POST", 4) == 0) handle_login(c, app, hm);
+        else reply_error(c, 405, "method not allowed");
+        return;
+    }
+    /* /auth/logout (POST) — does NOT require JWT */
+    if (sublen == 12 && memcmp(sub, "/auth/logout", 12) == 0) {
+        if (mlen == 4 && memcmp(meth, "POST", 4) == 0) handle_logout(c, app);
+        else reply_error(c, 405, "method not allowed");
+        return;
+    }
+
+    /* All remaining /api/<lang>/* routes require a valid JWT session
+     * (when jwt_secret is configured). */
+    current_user_t cur;
+    bool jwt_enabled = app->jwt_secret && *app->jwt_secret;
+    bool have_user = jwt_enabled ? extract_current_user(hm, app->jwt_secret, &cur) : false;
+    if (jwt_enabled && !have_user) {
+        reply_error(c, 401, "authentication required");
+        return;
+    }
+
+    /* /auth/me (GET) */
+    if (sublen == 8 && memcmp(sub, "/auth/me", 8) == 0) {
+        if (mlen == 3 && memcmp(meth, "GET", 3) == 0) {
+            if (jwt_enabled) handle_me(c, &cur);
+            else reply_error(c, 401, "authentication required");
+        } else reply_error(c, 405, "method not allowed");
+        return;
+    }
 
     bool is_data = (sublen == 5 && memcmp(sub, "/data", 5) == 0);
     bool is_data_id = (sublen > 6 && memcmp(sub, "/data/", 6) == 0);
@@ -447,6 +701,15 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
         if (mlen == 3 && memcmp(meth, "GET", 3) == 0) {
             handle_list(c, app);
         } else if (mlen == 4 && memcmp(meth, "POST", 4) == 0) {
+            /* role gate: writer or admin */
+            if (jwt_enabled) {
+                const char *wanted[] = { "writer", "admin" };
+                if (!roles_contains_any(cur.roles_json, strlen(cur.roles_json),
+                                        wanted, 2)) {
+                    reply_error(c, 403, "forbidden");
+                    return;
+                }
+            }
             handle_create(c, app, hm);
         } else {
             reply_error(c, 405, "method not allowed");

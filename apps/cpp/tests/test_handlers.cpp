@@ -143,3 +143,85 @@ TEST(CheckApiKey, InvalidOnWrongValue) {
 TEST(CheckApiKey, OkOnExactMatch) {
     EXPECT_EQ(check_api_key("secret", "secret"), AuthStatus::Ok);
 }
+
+// ---------- JWT / auth helpers ----------
+
+#include <ctime>
+#include "auth.hpp"
+
+TEST(B64UrlRoundtrip, Works) {
+    const char* in = "Hello, World!";
+    auto enc = b64url_encode(reinterpret_cast<const unsigned char*>(in), 13);
+    auto dec = b64url_decode(enc);
+    ASSERT_TRUE(dec.has_value());
+    std::string back(dec->begin(), dec->end());
+    EXPECT_EQ(back, std::string(in));
+}
+
+TEST(JwtRoundtrip, VerifiesWithCorrectSecret) {
+    const std::string secret = "shhh-shared-secret";
+    long long now = std::time(nullptr);
+    std::string payload = std::string("{\"sub\":\"42\",\"roles\":[\"writer\"],")
+                          + "\"iat\":" + std::to_string(now)
+                          + ",\"exp\":" + std::to_string(now + 60) + "}";
+    auto token = jwt_sign_hs256(payload, secret);
+    ASSERT_FALSE(token.empty());
+    auto back = jwt_verify_hs256(token, secret, now);
+    ASSERT_TRUE(back.has_value());
+    EXPECT_NE(back->find("\"sub\":\"42\""), std::string::npos);
+}
+
+TEST(JwtVerify, RejectsWrongSecret) {
+    long long now = std::time(nullptr);
+    std::string payload = "{\"sub\":\"1\",\"exp\":" + std::to_string(now + 60) + "}";
+    auto token = jwt_sign_hs256(payload, "good");
+    EXPECT_FALSE(jwt_verify_hs256(token, "bad", now).has_value());
+}
+
+TEST(JwtVerify, RejectsExpired) {
+    long long now = std::time(nullptr);
+    std::string payload = "{\"sub\":\"1\",\"exp\":" + std::to_string(now - 10) + "}";
+    auto token = jwt_sign_hs256(payload, "k");
+    EXPECT_FALSE(jwt_verify_hs256(token, "k", now).has_value());
+}
+
+TEST(CookieGetSession, ExtractsValue) {
+    auto t = cookie_get_session("session=abc.def.ghi; other=foo");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(*t, "abc.def.ghi");
+}
+
+TEST(CookieGetSession, FindsAfterOthers) {
+    auto t = cookie_get_session("lang=en; session=zzz");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(*t, "zzz");
+}
+
+TEST(CookieGetSession, MissingReturnsNullopt) {
+    EXPECT_FALSE(cookie_get_session("lang=en; theme=dark").has_value());
+}
+
+TEST(RolesContainsAny, HitsAndMisses) {
+    EXPECT_TRUE(roles_contains_any("[\"reader\",\"writer\"]", {"writer", "admin"}));
+    EXPECT_FALSE(roles_contains_any("[\"reader\"]", {"writer", "admin"}));
+    EXPECT_FALSE(roles_contains_any("[]", {"writer"}));
+}
+
+TEST(ParseUserPayload, ExtractsClaims) {
+    auto u = parse_user_payload(
+        "{\"sub\":\"42\",\"email\":\"a@b.c\",\"roles\":[\"writer\",\"admin\"],"
+        "\"iat\":1,\"exp\":2}");
+    EXPECT_EQ(u.id, 42);
+    EXPECT_EQ(u.email, "a@b.c");
+    EXPECT_NE(u.roles_json.find("\"writer\""), std::string::npos);
+    EXPECT_NE(u.roles_json.find("\"admin\""), std::string::npos);
+}
+
+TEST(HandleMe, ProducesJson) {
+    CurrentUser u;
+    u.id = 7; u.email = "x@y"; u.roles_json = "[\"reader\"]";
+    auto r = handle_me(u);
+    EXPECT_EQ(r.status, 200);
+    EXPECT_NE(r.body.find("\"id\":7"), std::string::npos);
+    EXPECT_NE(r.body.find("\"roles\":[\"reader\"]"), std::string::npos);
+}

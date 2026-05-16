@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
         libhiredis-dev \
+        libssl-dev \
+        libcrypt-dev \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -17,6 +19,8 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         libhiredis0.14 \
+        libssl3 \
+        libcrypt1 \
         curl \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
@@ -24,7 +28,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /build/server /app/server
-RUN chown -R app:app /app
+RUN chown -R app:app /app \
+    && mkdir -p /var/log/app && chown app:app /var/log/app
+
 USER app
 
 EXPOSE 8080

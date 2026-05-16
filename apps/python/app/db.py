@@ -148,3 +148,29 @@ class Database:
             logger.warning("insert failed: %s", exc)
             self.close()
             raise DatabaseUnavailable(str(exc)) from exc
+
+    def find_user_by_email(self, email: str) -> Optional[dict]:
+        try:
+            pool = self._ensure_pool()
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, email, password_hash, roles FROM users "
+                        "WHERE LOWER(email) = LOWER(%s)",
+                        (email,),
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "id": int(row[0]),
+                "email": row[1],
+                "password_hash": row[2],
+                "roles": list(row[3] or []),
+            }
+        except DatabaseUnavailable:
+            raise
+        except Exception as exc:
+            logger.warning("find_user_by_email failed: %s", exc)
+            self.close()
+            raise DatabaseUnavailable(str(exc)) from exc

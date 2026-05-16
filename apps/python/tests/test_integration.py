@@ -111,7 +111,12 @@ class BrokenCache:
 
 # ---------- Fixtures ----------
 
-def make_config(lang: str = "python", max_body: int = 1024, api_key: str = "") -> Config:
+def make_config(
+    lang: str = "python",
+    max_body: int = 1024,
+    api_key: str = "",
+    jwt_secret: str = "",
+) -> Config:
     return Config(
         port=8080,
         app_lang=lang,
@@ -126,6 +131,11 @@ def make_config(lang: str = "python", max_body: int = 1024, api_key: str = "") -
         redis_timeout_ms=200,
         max_body_bytes=max_body,
         api_key=api_key,
+        jwt_secret=jwt_secret,
+        cookie_secure=False,
+        access_log_path="./access.log",
+        access_log_max_bytes=10485760,
+        access_log_backups=5,
     )
 
 
@@ -424,3 +434,173 @@ def test_api_key_override_param_overrides_config(fake_db, fake_cache):
     with TestClient(app) as c:
         r = c.get("/api/python/data")
         assert r.status_code == 401
+
+
+# ---------- JWT cookie auth ----------
+
+import time
+
+import bcrypt as bcrypt_lib
+import jwt as pyjwt
+
+JWT_SECRET = "jwt-test-secret-aaaa"
+
+
+def _hash(password: str) -> str:
+    return bcrypt_lib.hashpw(password.encode(), bcrypt_lib.gensalt(4)).decode()
+
+
+def make_user(id_=1, email="alice@example.com", password="pa$$w0rd", roles=None):
+    if roles is None:
+        roles = ["reader"]
+    return {
+        "id": id_,
+        "email": email,
+        "password_hash": _hash(password),
+        "roles": roles,
+        "_password": password,
+    }
+
+
+class UsersDB(FakeDB):
+    def __init__(self, users):
+        super().__init__()
+        self._users = users
+
+    def find_user_by_email(self, email):
+        for u in self._users:
+            if u["email"].lower() == email.lower():
+                return {"id": u["id"], "email": u["email"], "password_hash": u["password_hash"], "roles": u["roles"]}
+        return None
+
+
+def auth_app(users):
+    db = UsersDB(users)
+    cache = FakeCache()
+    return create_app(db=db, cache=cache, config=make_config(jwt_secret=JWT_SECRET))
+
+
+def issue(sub, email, roles, secret=JWT_SECRET, **overrides):
+    now = int(time.time())
+    payload = {"sub": str(sub), "email": email, "roles": roles, "iat": now, "exp": now + 60}
+    payload.update(overrides)
+    return pyjwt.encode(payload, secret, algorithm="HS256")
+
+
+def test_login_sets_session_cookie():
+    u = make_user()
+    app = auth_app([u])
+    with TestClient(app) as c:
+        r = c.post("/api/python/auth/login", json={"email": u["email"], "password": u["_password"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["email"] == u["email"]
+        cookie = r.headers["set-cookie"]
+        assert "session=" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=Strict" in cookie
+
+
+def test_login_wrong_password_returns_401():
+    u = make_user()
+    app = auth_app([u])
+    with TestClient(app) as c:
+        r = c.post("/api/python/auth/login", json={"email": u["email"], "password": "nope"})
+        assert r.status_code == 401
+        assert r.json() == {"error": "invalid credentials"}
+
+
+def test_login_unknown_email_returns_401():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        r = c.post("/api/python/auth/login", json={"email": "ghost@x.com", "password": "x"})
+        assert r.status_code == 401
+
+
+def test_login_missing_fields_returns_400():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        r = c.post("/api/python/auth/login", json={})
+        assert r.status_code == 400
+
+
+def test_me_without_cookie_returns_401():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me")
+        assert r.status_code == 401
+
+
+def test_me_with_valid_cookie_returns_user():
+    u = make_user(id_=42, roles=["admin"])
+    app = auth_app([u])
+    token = issue(u["id"], u["email"], u["roles"])
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": token})
+        assert r.status_code == 200
+        assert r.json()["user"]["id"] == 42
+
+
+def test_me_with_expired_cookie_returns_401():
+    u = make_user()
+    app = auth_app([u])
+    now = int(time.time())
+    expired = pyjwt.encode(
+        {"sub": "1", "email": u["email"], "roles": u["roles"], "iat": now - 120, "exp": now - 60},
+        JWT_SECRET, algorithm="HS256",
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": expired})
+        assert r.status_code == 401
+
+
+def test_me_with_tampered_cookie_returns_401():
+    app = auth_app([make_user()])
+    bad = pyjwt.encode({"sub": "1"}, "wrong-secret", algorithm="HS256")
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": bad})
+        assert r.status_code == 401
+
+
+def test_get_data_requires_auth():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        assert c.get("/api/python/data").status_code == 401
+
+
+def test_get_data_succeeds_with_session():
+    u = make_user(roles=["reader"])
+    app = auth_app([u])
+    with TestClient(app) as c:
+        login = c.post("/api/python/auth/login", json={"email": u["email"], "password": u["_password"]})
+        assert login.status_code == 200
+        r = c.get("/api/python/data")
+        assert r.status_code == 200
+        assert r.json()["source"] == "db"
+
+
+def test_post_data_forbidden_without_writer_role():
+    u = make_user(roles=["reader"])
+    app = auth_app([u])
+    with TestClient(app) as c:
+        c.post("/api/python/auth/login", json={"email": u["email"], "password": u["_password"]})
+        r = c.post("/api/python/data", json={"content": "hi"})
+        assert r.status_code == 403
+        assert r.json() == {"error": "forbidden"}
+
+
+def test_post_data_ok_when_user_is_writer():
+    u = make_user(roles=["writer"])
+    app = auth_app([u])
+    with TestClient(app) as c:
+        c.post("/api/python/auth/login", json={"email": u["email"], "password": u["_password"]})
+        r = c.post("/api/python/data", json={"content": "hi"})
+        assert r.status_code == 201
+
+
+def test_logout_clears_session_cookie():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        r = c.post("/api/python/auth/logout")
+        assert r.status_code == 204
+        assert "session=" in r.headers["set-cookie"]
+        assert "Max-Age=0" in r.headers["set-cookie"]

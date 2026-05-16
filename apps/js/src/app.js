@@ -1,7 +1,10 @@
 'use strict';
 
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { itemKey, ALL_KEY } = require('./cache');
+const auth = require('./auth');
+const { buildAccessLog } = require('./access_log');
 
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
@@ -27,36 +30,20 @@ function validateContent(body) {
 function isDbUnavailable(err) {
   if (!err) return false;
   const code = err.code;
-  // pg error codes for connection-level problems
   if (
-    code === 'ECONNREFUSED' ||
-    code === 'ENOTFOUND' ||
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNRESET' ||
-    code === 'EHOSTUNREACH' ||
-    code === 'EAI_AGAIN' ||
-    code === '57P01' || // admin_shutdown
-    code === '57P02' || // crash_shutdown
-    code === '57P03' || // cannot_connect_now
-    code === '08000' || // connection_exception
-    code === '08003' || // connection_does_not_exist
-    code === '08006' || // connection_failure
-    code === '08001' || // sqlclient_unable_to_establish_sqlconnection
-    code === '08004'    // sqlserver_rejected_establishment_of_sqlconnection
-  ) {
-    return true;
-  }
-  // pool/connection-timeout messages from node-postgres
+    code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET'  || code === 'EHOSTUNREACH' || code === 'EAI_AGAIN' ||
+    code === '57P01' || code === '57P02' || code === '57P03' ||
+    code === '08000' || code === '08003' || code === '08006' ||
+    code === '08001' || code === '08004'
+  ) return true;
   const msg = (err.message || '').toLowerCase();
-  if (
+  return (
     msg.includes('connection terminated') ||
     msg.includes('timeout exceeded when trying to connect') ||
     msg.includes('client has encountered a connection error') ||
     msg.includes('connection ended')
-  ) {
-    return true;
-  }
-  return false;
+  );
 }
 
 function jsonError(res, status, message) {
@@ -64,8 +51,15 @@ function jsonError(res, status, message) {
 }
 
 /**
- * Build the express app. `deps` is `{ db, cache, lang, maxBodyBytes }`.
- * `db` and `cache` are injected so tests can provide fakes.
+ * Build the express app.
+ * deps = {
+ *   db, cache,
+ *   lang, maxBodyBytes,
+ *   apiKey,                 // X-API-Key (defense-in-depth gate). "" disables.
+ *   jwtSecret,              // HS256 secret for session cookie. "" disables.
+ *   cookieSecure,           // boolean — Secure attribute on session cookie.
+ *   accessLog,              // optional pre-built morgan middleware (array or single)
+ * }
  */
 function createApp(deps) {
   const {
@@ -74,6 +68,9 @@ function createApp(deps) {
     lang = process.env.APP_LANG || 'js',
     maxBodyBytes = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10),
     apiKey = process.env.API_KEY || '',
+    jwtSecret = process.env.JWT_SECRET || '',
+    cookieSecure = (process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false',
+    accessLog,
   } = deps;
 
   if (!db) throw new Error('createApp: db dependency is required');
@@ -82,54 +79,113 @@ function createApp(deps) {
   const app = express();
   app.disable('x-powered-by');
 
-  // Health is registered before body parsing AND before the auth middleware
-  // so the ALB target-group health check stays cheap and unauthenticated.
+  // Access log first (so /health is also logged).
+  if (accessLog) {
+    if (Array.isArray(accessLog)) accessLog.forEach((m) => app.use(m));
+    else app.use(accessLog);
+  }
+
+  // /health is unauthenticated — ALB target-group health check.
   app.get('/health', (_req, res) => {
-    res
-      .status(200)
-      .type('application/json')
-      .send(JSON.stringify({ status: 'ok', lang }));
+    res.status(200).type('application/json').send(JSON.stringify({ status: 'ok', lang }));
   });
 
-  // API-key auth. When apiKey is the empty string the check is disabled
-  // (useful for some unit tests). In production the env var is always set.
+  // ----- API-key gate (every /api/<lang>/* route) -----
   if (apiKey) {
     app.use((req, res, next) => {
+      if (!req.path.startsWith(`/api/${lang}`)) return next();
       const presented = req.header('x-api-key');
-      if (!presented) {
-        return jsonError(res, 401, 'missing api key');
-      }
-      if (presented !== apiKey) {
-        return jsonError(res, 401, 'invalid api key');
+      if (!presented) return jsonError(res, 401, 'missing api key');
+      if (presented !== apiKey) return jsonError(res, 401, 'invalid api key');
+      next();
+    });
+  }
+
+  // ----- JWT verification middleware: populates req.user when valid -----
+  if (jwtSecret) {
+    app.use((req, _res, next) => {
+      const token = auth.extractToken(req);
+      if (token) {
+        const claims = auth.verifySession(token, jwtSecret);
+        if (claims) req.user = claims;
       }
       next();
     });
   }
 
-  // Body parser scoped to the data POST route so other routes are not affected
-  // by parser side effects. We use raw + manual JSON parse so we can produce
-  // our exact error contract for malformed JSON and oversized payloads.
-  const rawParser = express.raw({
-    type: '*/*',
-    limit: maxBodyBytes,
-    // Important: the limit handler in express raises an error our error
-    // handler converts to 413.
-  });
+  function requireAuth(req, res, next) {
+    if (!jwtSecret) return next(); // disabled (tests)
+    if (!req.user) return jsonError(res, 401, 'authentication required');
+    next();
+  }
+
+  function requireRole(...roles) {
+    return (req, res, next) => {
+      if (!jwtSecret) return next();
+      if (!req.user) return jsonError(res, 401, 'authentication required');
+      if (!auth.hasRole(req.user, ...roles)) return jsonError(res, 403, 'forbidden');
+      next();
+    };
+  }
 
   const base = `/api/${lang}`;
 
-  app.get(`${base}/data`, async (_req, res) => {
+  // ----- Auth routes -----
+  app.post(`${base}/auth/login`, express.json({ limit: 8192 }), async (req, res) => {
+    const body = req.body || {};
+    const email = typeof body.email === 'string' ? body.email.trim() : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (!email || !password) {
+      return jsonError(res, 400, 'email and password are required');
+    }
+
+    let user;
+    try {
+      user = await db.findUserByEmail(email);
+    } catch (err) {
+      if (isDbUnavailable(err)) return jsonError(res, 503, 'database unavailable');
+      console.error('[app] findUserByEmail error:', err.message);
+      return jsonError(res, 503, 'database unavailable');
+    }
+
+    if (!user) return jsonError(res, 401, 'invalid credentials');
+
+    let ok = false;
+    try { ok = await bcrypt.compare(password, user.password_hash); } catch (_) { ok = false; }
+    if (!ok) return jsonError(res, 401, 'invalid credentials');
+
+    if (!jwtSecret) return jsonError(res, 500, 'auth not configured');
+
+    const token = auth.signSession(
+      { sub: String(user.id), email: user.email, roles: user.roles },
+      jwtSecret
+    );
+    res.setHeader('Set-Cookie', auth.buildSetCookie(token, { secure: cookieSecure }));
+    res.status(200).type('application/json').send(JSON.stringify({
+      user: { id: user.id, email: user.email, roles: user.roles },
+    }));
+  });
+
+  app.post(`${base}/auth/logout`, (_req, res) => {
+    res.setHeader('Set-Cookie', auth.buildClearCookie({ secure: cookieSecure }));
+    res.status(204).end();
+  });
+
+  app.get(`${base}/auth/me`, requireAuth, (req, res) => {
+    res.status(200).type('application/json').send(JSON.stringify({
+      user: { id: Number(req.user.sub), email: req.user.email, roles: req.user.roles },
+    }));
+  });
+
+  // ----- Data routes (protected) -----
+  app.get(`${base}/data`, requireAuth, async (_req, res) => {
     try {
       const cached = await cache.get(ALL_KEY);
       if (cached != null) {
-        return res
-          .status(200)
-          .type('application/json')
+        return res.status(200).type('application/json')
           .send(JSON.stringify({ source: 'cache', items: cached }));
       }
     } catch (err) {
-      // cache module already swallows errors, but be defensive
-      // eslint-disable-next-line no-console
       console.warn('[app] cache.get unexpected error:', err.message);
     }
 
@@ -137,45 +193,28 @@ function createApp(deps) {
     try {
       items = await db.listAll();
     } catch (err) {
-      if (isDbUnavailable(err)) {
-        await maybeResetDb(db);
-        return jsonError(res, 503, 'database unavailable');
-      }
-      // eslint-disable-next-line no-console
+      if (isDbUnavailable(err)) { await maybeResetDb(db); return jsonError(res, 503, 'database unavailable'); }
       console.error('[app] db.listAll error:', err.message);
       return jsonError(res, 503, 'database unavailable');
     }
 
-    // best-effort cache fill
-    try {
-      await cache.set(ALL_KEY, items);
-    } catch (_) {
-      /* swallow */
-    }
-
-    return res
-      .status(200)
-      .type('application/json')
+    try { await cache.set(ALL_KEY, items); } catch (_) { /* swallow */ }
+    return res.status(200).type('application/json')
       .send(JSON.stringify({ source: 'db', items }));
   });
 
-  app.get(`${base}/data/:id`, async (req, res) => {
+  app.get(`${base}/data/:id`, requireAuth, async (req, res) => {
     const id = parsePositiveInt(req.params.id);
-    if (id == null) {
-      return jsonError(res, 400, 'invalid id');
-    }
+    if (id == null) return jsonError(res, 400, 'invalid id');
 
     const key = itemKey(id);
     try {
       const cached = await cache.get(key);
       if (cached != null) {
-        return res
-          .status(200)
-          .type('application/json')
+        return res.status(200).type('application/json')
           .send(JSON.stringify({ source: 'cache', item: cached }));
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('[app] cache.get unexpected error:', err.message);
     }
 
@@ -183,33 +222,21 @@ function createApp(deps) {
     try {
       item = await db.getById(id);
     } catch (err) {
-      if (isDbUnavailable(err)) {
-        await maybeResetDb(db);
-        return jsonError(res, 503, 'database unavailable');
-      }
-      // eslint-disable-next-line no-console
+      if (isDbUnavailable(err)) { await maybeResetDb(db); return jsonError(res, 503, 'database unavailable'); }
       console.error('[app] db.getById error:', err.message);
       return jsonError(res, 503, 'database unavailable');
     }
 
-    if (!item) {
-      return jsonError(res, 404, 'not found');
-    }
+    if (!item) return jsonError(res, 404, 'not found');
+    try { await cache.set(key, item); } catch (_) { /* swallow */ }
 
-    try {
-      await cache.set(key, item);
-    } catch (_) {
-      /* swallow */
-    }
-
-    return res
-      .status(200)
-      .type('application/json')
+    return res.status(200).type('application/json')
       .send(JSON.stringify({ source: 'db', item }));
   });
 
-  app.post(`${base}/data`, rawParser, async (req, res) => {
-    // rawParser puts a Buffer in req.body. Parse manually to control errors.
+  const rawParser = express.raw({ type: '*/*', limit: maxBodyBytes });
+
+  app.post(`${base}/data`, requireRole('writer', 'admin'), rawParser, async (req, res) => {
     let payload;
     try {
       const buf = req.body;
@@ -222,47 +249,25 @@ function createApp(deps) {
     }
 
     const v = validateContent(payload);
-    if (!v.ok) {
-      return jsonError(res, 400, v.error);
-    }
+    if (!v.ok) return jsonError(res, 400, v.error);
 
     let item;
     try {
       item = await db.insert(v.content);
     } catch (err) {
-      if (isDbUnavailable(err)) {
-        await maybeResetDb(db);
-        return jsonError(res, 503, 'database unavailable');
-      }
-      // eslint-disable-next-line no-console
+      if (isDbUnavailable(err)) { await maybeResetDb(db); return jsonError(res, 503, 'database unavailable'); }
       console.error('[app] db.insert error:', err.message);
       return jsonError(res, 503, 'database unavailable');
     }
 
-    // best-effort cache invalidation
-    try {
-      await cache.del(ALL_KEY);
-    } catch (_) {
-      /* swallow */
-    }
-
-    return res
-      .status(201)
-      .type('application/json')
-      .send(JSON.stringify({ item }));
+    try { await cache.del(ALL_KEY); } catch (_) { /* swallow */ }
+    return res.status(201).type('application/json').send(JSON.stringify({ item }));
   });
 
-  // Express error handler — converts body parser errors to our contract.
-  // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
     if (!err) return jsonError(res, 500, 'internal error');
-    if (err.type === 'entity.too.large' || err.status === 413) {
-      return jsonError(res, 413, 'payload too large');
-    }
-    if (err.type === 'entity.parse.failed' || err.status === 400) {
-      return jsonError(res, 400, 'malformed json');
-    }
-    // eslint-disable-next-line no-console
+    if (err.type === 'entity.too.large' || err.status === 413) return jsonError(res, 413, 'payload too large');
+    if (err.type === 'entity.parse.failed' || err.status === 400) return jsonError(res, 400, 'malformed json');
     console.error('[app] unhandled error:', err.message);
     return jsonError(res, 500, 'internal error');
   });
@@ -272,11 +277,7 @@ function createApp(deps) {
 
 async function maybeResetDb(db) {
   if (db && typeof db.reset === 'function') {
-    try {
-      await db.reset();
-    } catch (_) {
-      /* ignore */
-    }
+    try { await db.reset(); } catch (_) { /* ignore */ }
   }
 }
 

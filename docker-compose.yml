@@ -18,7 +18,6 @@ services:
       POSTGRES_USER: appuser
       POSTGRES_PASSWORD: apppass
     volumes:
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
@@ -38,6 +37,31 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot: apply pending migrations and seed an admin user, then exit.
+  # Every app depends_on: migrate so it cannot start until the schema is ready.
+  migrate:
+    image: python:3.12-slim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db:/db:ro
+    working_dir: /db
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: appuser
+      PGPASSWORD: apppass
+      PGDATABASE: appdb
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null
+        pip install -q bcrypt
+        /db/migrate.sh up
+        /db/migrate.sh seed-admin --email admin@local --password supersecret
+
   js:
     build: ./apps/js
     environment:
@@ -54,9 +78,13 @@ services:
       REDIS_TIMEOUT_MS: "200"
       MAX_BODY_BYTES: "1048576"
       API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
     ports:
       - "8081:8080"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -78,9 +106,13 @@ services:
       REDIS_TIMEOUT_MS: "200"
       MAX_BODY_BYTES: "1048576"
       API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
     ports:
       - "8082:8080"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -102,9 +134,13 @@ services:
       REDIS_TIMEOUT_MS: "200"
       MAX_BODY_BYTES: "1048576"
       API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
     ports:
       - "8083:8080"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -126,9 +162,13 @@ services:
       REDIS_TIMEOUT_MS: "200"
       MAX_BODY_BYTES: "1048576"
       API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
     ports:
       - "8084:8080"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

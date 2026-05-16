@@ -88,6 +88,12 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "jwt_secret" {
+  description = "HMAC-SHA256 signing secret for the session JWT cookie. Stored in Secrets Manager. Keep in terraform.tfvars (gitignored). Generate: openssl rand -hex 64."
+  type        = string
+  sensitive   = true
+}
+
 variable "db_instance_class" {
   description = "RDS instance class."
   type        = string

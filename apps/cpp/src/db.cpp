@@ -164,3 +164,36 @@ DataItem Database::insert(const std::string& content) {
 }
 
 }  // namespace app
+
+namespace app {
+
+std::optional<Database::UserRow> Database::find_user_by_email(const std::string& email) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    try {
+        auto* c = ensure_conn();
+        pqxx::work tx(*c);
+        auto result = tx.exec_params(
+            "SELECT id, email, password_hash, "
+            "COALESCE(to_jsonb(roles)::text, '[]') "
+            "FROM users WHERE LOWER(email) = LOWER($1)",
+            email);
+        tx.commit();
+        if (result.empty()) return std::nullopt;
+        const auto& row = result[0];
+        UserRow u;
+        u.id            = row[0].as<long long>();
+        u.email         = row[1].as<std::string>();
+        u.password_hash = row[2].as<std::string>();
+        u.roles_json    = row[3].as<std::string>();
+        return u;
+    } catch (const pqxx::broken_connection& e) {
+        reset_conn();
+        throw DatabaseUnavailable(std::string("find_user_by_email: ") + e.what());
+    } catch (const DatabaseUnavailable&) {
+        throw;
+    } catch (const std::exception& e) {
+        reset_conn();
+        throw DatabaseUnavailable(std::string("find_user_by_email: ") + e.what());
+    }
+}
+}  // namespace app

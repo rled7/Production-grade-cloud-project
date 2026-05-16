@@ -1,9 +1,13 @@
 #include <csignal>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 
+#include "access_log.hpp"
+#include "auth.hpp"
 #include "cache.hpp"
 #include "config.hpp"
 #include "crow_all.h"
@@ -30,6 +34,12 @@ app::Config load_config_from_env() {
     return c;
 }
 
+crow::response to_response(const app::HandlerResult& r) {
+    crow::response resp(r.status, r.body);
+    resp.set_header("Content-Type", "application/json");
+    return resp;
+}
+
 crow::response auth_response(app::AuthStatus s) {
     if (s == app::AuthStatus::Missing) {
         crow::response r(401, R"({"error":"missing api key"})");
@@ -41,10 +51,16 @@ crow::response auth_response(app::AuthStatus s) {
     return r;
 }
 
-crow::response to_response(const app::HandlerResult& r) {
-    crow::response resp(r.status, r.body);
-    resp.set_header("Content-Type", "application/json");
-    return resp;
+crow::response unauthorized() {
+    crow::response r(401, R"({"error":"authentication required"})");
+    r.set_header("Content-Type", "application/json");
+    return r;
+}
+
+crow::response forbidden() {
+    crow::response r(403, R"({"error":"forbidden"})");
+    r.set_header("Content-Type", "application/json");
+    return r;
 }
 
 }  // namespace
@@ -52,19 +68,26 @@ crow::response to_response(const app::HandlerResult& r) {
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     app::Config cfg = load_config_from_env();
+    const std::string jwt_secret = app::env_str("JWT_SECRET", "");
+    const bool cookie_secure =
+        app::env_str("COOKIE_SECURE", "true") != "false" &&
+        app::env_str("COOKIE_SECURE", "true") != "0";
+    const std::string access_log_path = app::env_str("ACCESS_LOG_PATH", "./access.log");
+    const std::size_t access_log_max_bytes = static_cast<std::size_t>(
+        app::env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024));
+    const int access_log_backups = app::env_int("ACCESS_LOG_BACKUPS", 5);
 
-    // DB: best-effort schema bootstrap; survive failure (will retry on request).
+    if (cfg.api_key.empty()) std::cerr << "[warn] API_KEY empty — API-key gate DISABLED\n";
+    if (jwt_secret.empty())  std::cerr << "[warn] JWT_SECRET empty — JWT verification DISABLED\n";
+
     auto db = std::make_unique<app::Database>(cfg.dsn());
-    try {
-        db->ensure_schema();
-    } catch (const std::exception& e) {
+    try { db->ensure_schema(); } catch (const std::exception& e) {
         std::cerr << "[warn] could not ensure schema at startup: " << e.what() << "\n";
     }
-
-    // Cache: always constructed, internally degrades on connect/op failure.
     auto cache = std::make_unique<app::Cache>(cfg.redis_host, cfg.redis_port,
-                                              cfg.redis_timeout_ms,
-                                              cfg.cache_ttl_seconds);
+                                              cfg.redis_timeout_ms, cfg.cache_ttl_seconds);
+    auto access_log = std::make_unique<app::AccessLog>(
+        access_log_path, access_log_max_bytes, access_log_backups);
 
     app::AppDeps deps;
     deps.db = db.get();
@@ -73,52 +96,135 @@ int main() {
     deps.cache_ttl_seconds = cfg.cache_ttl_seconds;
     deps.max_body_bytes = cfg.max_body_bytes;
     deps.api_key = cfg.api_key;
-    if (deps.api_key.empty()) {
-        std::cerr << "[warn] API_KEY env var is empty — auth is DISABLED.\n";
-    }
+    deps.jwt_secret = jwt_secret;
+    deps.cookie_secure = cookie_secure;
 
     crow::SimpleApp crow_app;
     crow_app.loglevel(crow::LogLevel::Warning);
 
-    // Health check (used by ALB target group)
+    // ----- Access log: write a line per request before dispatch.
+    auto log_request = [logger = access_log.get()](const crow::request& req) {
+        char ts[40];
+        std::time_t now = std::time(nullptr);
+        struct tm tm{};
+        gmtime_r(&now, &tm);
+        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+        std::ostringstream line;
+        line << req.remote_ip_address << " - - [" << ts << "] \""
+             << crow::method_name(req.method) << " " << req.url << " HTTP/1.1\"";
+        logger->write(line.str());
+    };
+
+    auto api_key_check = [&deps](const crow::request& req) -> std::optional<crow::response> {
+        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
+        if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
+            return auth_response(auth);
+        }
+        return std::nullopt;
+    };
+
+    auto extract_user = [&deps](const crow::request& req) -> std::optional<app::CurrentUser> {
+        if (deps.jwt_secret.empty()) return std::nullopt;
+        auto cookie_hdr = req.get_header_value("Cookie");
+        auto token = app::cookie_get_session(cookie_hdr);
+        if (!token) return std::nullopt;
+        auto payload = app::jwt_verify_hs256(
+            *token, deps.jwt_secret, static_cast<std::int64_t>(std::time(nullptr)));
+        if (!payload) return std::nullopt;
+        return app::parse_user_payload(*payload);
+    };
+
+    // /health — public, but still logs.
     CROW_ROUTE(crow_app, "/health").methods(crow::HTTPMethod::GET)
-    ([&deps]() {
+    ([&deps, log_request](const crow::request& req) {
+        log_request(req);
         return to_response(app::handle_health(deps));
     });
 
-    // /api/<lang>/data — GET (list), POST (create)
-    CROW_ROUTE(crow_app, "/api/<string>/data")
-        .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)
-    ([&deps](const crow::request& req, std::string lang) {
-        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
-        if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
-            return auth_response(auth);
-        }
+    // /api/<lang>/auth/login
+    CROW_ROUTE(crow_app, "/api/<string>/auth/login").methods(crow::HTTPMethod::POST)
+    ([&deps, log_request, api_key_check](const crow::request& req, std::string lang) {
+        log_request(req);
+        if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
             r.set_header("Content-Type", "application/json");
             return r;
         }
-        if (req.method == crow::HTTPMethod::GET) {
-            return to_response(app::handle_list(deps));
-        }
-        return to_response(app::handle_create(deps, req.body));
+        auto lr = app::handle_login(deps, req.body);
+        crow::response resp(lr.status, lr.body);
+        resp.set_header("Content-Type", "application/json");
+        if (!lr.set_cookie.empty()) resp.set_header("Set-Cookie", lr.set_cookie);
+        return resp;
     });
 
-    // /api/<lang>/data/<id> — GET single. id captured as <string> so we can
-    // return 400 "invalid id" for non-positive-int rather than a generic 404.
-    CROW_ROUTE(crow_app, "/api/<string>/data/<string>")
-        .methods(crow::HTTPMethod::GET)
-    ([&deps](const crow::request& req, std::string lang, std::string id_str) {
-        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
-        if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
-            return auth_response(auth);
-        }
+    // /api/<lang>/auth/logout
+    CROW_ROUTE(crow_app, "/api/<string>/auth/logout").methods(crow::HTTPMethod::POST)
+    ([&deps, log_request, api_key_check](const crow::request& req, std::string lang) {
+        log_request(req);
+        if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
             r.set_header("Content-Type", "application/json");
             return r;
         }
+        std::string c = "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
+        if (deps.cookie_secure) c += "; Secure";
+        crow::response resp(204, "");
+        resp.set_header("Set-Cookie", c);
+        return resp;
+    });
+
+    // /api/<lang>/auth/me
+    CROW_ROUTE(crow_app, "/api/<string>/auth/me").methods(crow::HTTPMethod::GET)
+    ([&deps, log_request, api_key_check, extract_user](const crow::request& req, std::string lang) {
+        log_request(req);
+        if (auto err = api_key_check(req)) return std::move(*err);
+        if (lang != deps.app_lang) {
+            crow::response r(404, R"({"error":"not found"})");
+            r.set_header("Content-Type", "application/json");
+            return r;
+        }
+        auto u = extract_user(req);
+        if (!u) return unauthorized();
+        return to_response(app::handle_me(*u));
+    });
+
+    // /api/<lang>/data (GET, POST)
+    CROW_ROUTE(crow_app, "/api/<string>/data")
+        .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)
+    ([&deps, log_request, api_key_check, extract_user](const crow::request& req, std::string lang) {
+        log_request(req);
+        if (auto err = api_key_check(req)) return std::move(*err);
+        if (lang != deps.app_lang) {
+            crow::response r(404, R"({"error":"not found"})");
+            r.set_header("Content-Type", "application/json");
+            return r;
+        }
+        auto user = extract_user(req);
+        if (!deps.jwt_secret.empty() && !user) return unauthorized();
+        if (req.method == crow::HTTPMethod::POST) {
+            if (!deps.jwt_secret.empty() &&
+                !app::roles_contains_any(user->roles_json, {"writer", "admin"})) {
+                return forbidden();
+            }
+            return to_response(app::handle_create(deps, req.body));
+        }
+        return to_response(app::handle_list(deps));
+    });
+
+    // /api/<lang>/data/<id>
+    CROW_ROUTE(crow_app, "/api/<string>/data/<string>").methods(crow::HTTPMethod::GET)
+    ([&deps, log_request, api_key_check, extract_user]
+     (const crow::request& req, std::string lang, std::string id_str) {
+        log_request(req);
+        if (auto err = api_key_check(req)) return std::move(*err);
+        if (lang != deps.app_lang) {
+            crow::response r(404, R"({"error":"not found"})");
+            r.set_header("Content-Type", "application/json");
+            return r;
+        }
+        if (!deps.jwt_secret.empty() && !extract_user(req)) return unauthorized();
         return to_response(app::handle_get_one(deps, id_str));
     });
 

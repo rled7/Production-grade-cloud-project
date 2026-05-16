@@ -24,3 +24,21 @@ variable "engine_version" {
   type        = string
   default     = "7.1"
 }
+
+variable "num_cache_clusters" {
+  description = "Number of cache clusters (1 = single primary, no replicas). Setting >1 enables automatic_failover + multi_az."
+  type        = number
+  default     = 1
+}
+
+variable "at_rest_encryption_enabled" {
+  description = "Encrypt cache data at rest. Requires Redis 3.2.6+."
+  type        = bool
+  default     = true
+}
+
+variable "transit_encryption_enabled" {
+  description = "Encrypt cache data in transit (TLS). Applications must connect using rediss:// / TLS. Requires Redis 3.2.6+."
+  type        = bool
+  default     = true
+}

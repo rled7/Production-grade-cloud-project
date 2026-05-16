@@ -107,14 +107,29 @@ Edge cases (each app must satisfy all of these — covered by unit + integration
 
 ### Authentication
 
-Every `/api/<lang>/*` request must carry an `X-API-Key: <value>` header. The
-expected value comes from the `API_KEY` env var, which the production task
-definitions inject from AWS Secrets Manager. Locally, `docker compose` uses
-`API_KEY=local-dev-key`. Pure auth helpers (`check_api_key`) are unit-tested
-per language with constant-time comparison.
+Two layers, both required on `/api/<lang>/*`:
 
-If `API_KEY` is the empty string, auth is **disabled** — useful for the
-test suites but a misconfiguration for any real environment.
+1. **API key** (`X-API-Key` header) — service-to-service gate. Value comes
+   from `API_KEY` env (Secrets Manager in prod). Empty disables (test only).
+2. **JWT session cookie** — end-user gate. Issued by `POST /api/<lang>/auth/login`
+   after bcrypt password check, stored as an HttpOnly + SameSite=Strict +
+   Secure cookie named `session`. Signed HS256 with `JWT_SECRET` (Secrets
+   Manager in prod). 1-hour TTL.
+
+`/health` is exempt from both layers — the ALB target-group health check
+stays public.
+
+**Auth endpoints (per language):**
+- `POST /api/<lang>/auth/login` — body `{"email","password"}` → 200 + Set-Cookie,
+  or 401 `{"error":"invalid credentials"}`.
+- `POST /api/<lang>/auth/logout` → 204 + clear cookie.
+- `GET  /api/<lang>/auth/me` → 200 with the current user, or 401.
+
+**Role gate on POST `/api/<lang>/data`:** user must have `writer` or `admin`
+in their roles array, otherwise 403 `{"error":"forbidden"}`.
+
+The `users` table is populated by the migration tool's `seed-admin` command;
+docker-compose seeds a default admin (`admin@local` / `supersecret`).
 
 ## Getting started
 
@@ -144,22 +159,35 @@ curl http://localhost:8082/health   # Python  → {"status":"ok","lang":"python"
 curl http://localhost:8083/health   # C       → {"status":"ok","lang":"c"}
 curl http://localhost:8084/health   # C++     → {"status":"ok","lang":"cpp"}
 
-# /api/<lang>/* requires the X-API-Key header. docker-compose sets API_KEY=local-dev-key.
+# /api/<lang>/* requires X-API-Key (service gate) + a session cookie (user gate).
+# docker-compose sets API_KEY=local-dev-key. The migrate service seeds admin@local.
 KEY=local-dev-key
 
-# create a row through the JS service
-curl -X POST http://localhost:8081/api/js/data \
+# 1. Log in to obtain a session cookie.
+curl -c /tmp/cookies -X POST http://localhost:8081/api/js/auth/login \
      -H "X-API-Key: $KEY" \
      -H 'content-type: application/json' \
+     -d '{"email":"admin@local","password":"supersecret"}'
+# → {"user":{"id":1,"email":"admin@local","roles":["admin","writer","reader"]}}
+
+# 2. Use the cookie + the API key on data routes.
+curl -b /tmp/cookies -H "X-API-Key: $KEY" \
+     -X POST http://localhost:8081/api/js/data \
+     -H 'content-type: application/json' \
      -d '{"content":"hello world"}'
-# → {"item":{"id":1,"content":"hello world","created_at":"..."}}
+# → 201 {"item":{...}}
 
-# list rows (first call → "source":"db", second call → "source":"cache")
-curl -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
-curl -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
+# 3. List rows (first call → "source":"db", second call → "source":"cache")
+curl -b /tmp/cookies -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
+curl -b /tmp/cookies -H "X-API-Key: $KEY" http://localhost:8081/api/js/data
 
-# without the key:
-curl -i http://localhost:8081/api/js/data   # → HTTP/1.1 401, {"error":"missing api key"}
+# 4. Logout.
+curl -b /tmp/cookies -H "X-API-Key: $KEY" \
+     -X POST http://localhost:8081/api/js/auth/logout
+
+# Without the API key:   → 401 {"error":"missing api key"}
+# With key but no cookie → 401 {"error":"authentication required"}
+# With reader-only role on POST → 403 {"error":"forbidden"}
 
 # tear everything down
 docker compose down                 # add -v to drop the Postgres volume too
@@ -187,10 +215,19 @@ SQL
 # 3. Apply the schema (apps also create the table on startup; this is just optional).
 PGPASSWORD=apppass psql -h 127.0.0.1 -U appuser -d appdb -f db/init.sql
 
+# 3.5. Apply migrations + seed an admin user (canonical: db/migrate.sh).
+PGHOST=127.0.0.1 PGPORT=5432 PGUSER=appuser PGPASSWORD=apppass PGDATABASE=appdb \
+    pip install --quiet bcrypt && \
+    ./db/migrate.sh up && \
+    ./db/migrate.sh seed-admin --email admin@local --password supersecret
+
 # 4. Set the env vars used by every language.
 export DB_HOST=127.0.0.1 DB_PORT=5432 DB_NAME=appdb DB_USER=appuser DB_PASSWORD=apppass
 export REDIS_HOST=127.0.0.1 REDIS_PORT=6379
-export API_KEY=local-dev-key   # required header value for /api/<lang>/*
+export API_KEY=local-dev-key                                # service-to-service gate
+export JWT_SECRET=local-dev-jwt-secret-change-in-prod       # signs session cookie
+export COOKIE_SECURE=false                                   # set true only over HTTPS
+export ACCESS_LOG_PATH=./access.log                          # rotating per-request log
 
 # 5. Run whichever app you want. Each listens on $PORT and answers /api/$APP_LANG/...
 # --- JavaScript ---
@@ -226,13 +263,13 @@ docker compose start redis            # or: sudo service redis-server start
 ## Running the test suite locally
 
 ```bash
-# JavaScript    (Jest + supertest)        47 tests
+# JavaScript    (Jest + supertest)        60 tests
 cd apps/js     && npm install && npm test
-# Python        (PyTest + httpx)          44 tests
+# Python        (PyTest + httpx)          57 tests
 cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
-# C             (Unity)                   21 tests
+# C             (Unity)                   31 tests
 cd apps/c      && make test
-# C++           (GoogleTest)              22 tests
+# C++           (GoogleTest)              32 tests
 cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
 ```
 

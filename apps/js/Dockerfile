@@ -29,7 +29,9 @@ COPY --from=builder /build/node_modules /app/node_modules
 COPY package.json /app/package.json
 COPY src /app/src
 
-RUN chown -R appuser:appgroup /app
+RUN chown -R appuser:appgroup /app \
+    && mkdir -p /var/log/app \
+    && chown appuser:appgroup /var/log/app
 
 USER appuser
 

@@ -2,10 +2,12 @@
 
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <iostream>
 #include <limits>
 #include <sstream>
 
+#include "auth.hpp"
 #include "crow_all.h"
 
 namespace app {
@@ -206,6 +208,131 @@ HandlerResult handle_create(AppDeps& deps, const std::string& body_str) {
         std::cerr << "[db] error: " << e.what() << "\n";
         return error_response(500, "internal");
     }
+}
+
+// ---------- Auth handlers ----------
+
+LoginResult handle_login(AppDeps& deps, const std::string& body_str) {
+    LoginResult r;
+    if (body_str.size() > deps.max_body_bytes) {
+        r.status = 413;
+        r.body = R"({"error":"payload too large"})";
+        return r;
+    }
+    auto json = crow::json::load(body_str);
+    if (!json) {
+        r.status = 400;
+        r.body = R"({"error":"malformed json"})";
+        return r;
+    }
+    if (!json.has("email") || !json.has("password") ||
+        json["email"].t() != crow::json::type::String ||
+        json["password"].t() != crow::json::type::String) {
+        r.status = 400;
+        r.body = R"({"error":"email and password are required"})";
+        return r;
+    }
+    std::string email = json["email"].s();
+    std::string password = json["password"].s();
+    if (email.empty() || password.empty()) {
+        r.status = 400;
+        r.body = R"({"error":"email and password are required"})";
+        return r;
+    }
+
+    std::optional<Database::UserRow> user;
+    try {
+        user = deps.db->find_user_by_email(email);
+    } catch (const DatabaseUnavailable&) {
+        r.status = 503;
+        r.body = R"({"error":"database unavailable"})";
+        return r;
+    }
+    if (!user) {
+        r.status = 401;
+        r.body = R"({"error":"invalid credentials"})";
+        return r;
+    }
+    if (!bcrypt_verify(password, user->password_hash)) {
+        r.status = 401;
+        r.body = R"({"error":"invalid credentials"})";
+        return r;
+    }
+    if (deps.jwt_secret.empty()) {
+        r.status = 500;
+        r.body = R"({"error":"auth not configured"})";
+        return r;
+    }
+
+    long long now = static_cast<long long>(std::time(nullptr));
+    const std::string& roles = user->roles_json.empty() ? std::string("[]") : user->roles_json;
+    std::string payload = "{\"sub\":\"" + std::to_string(user->id) + "\","
+                          "\"email\":" + json_quote(user->email) + ","
+                          "\"roles\":" + roles + ","
+                          "\"iat\":" + std::to_string(now) + ","
+                          "\"exp\":" + std::to_string(now + 3600) + "}";
+    std::string token = jwt_sign_hs256(payload, deps.jwt_secret);
+    if (token.empty()) {
+        r.status = 500;
+        r.body = R"({"error":"internal"})";
+        return r;
+    }
+
+    r.status = 200;
+    r.body = "{\"user\":{\"id\":" + std::to_string(user->id) +
+             ",\"email\":" + json_quote(user->email) +
+             ",\"roles\":" + roles + "}}";
+    r.set_cookie = "session=" + token +
+                   "; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600";
+    if (deps.cookie_secure) r.set_cookie += "; Secure";
+    return r;
+}
+
+CurrentUser parse_user_payload(const std::string& payload) {
+    CurrentUser u;
+    auto sub_pos = payload.find("\"sub\"");
+    if (sub_pos != std::string::npos) {
+        auto colon = payload.find(':', sub_pos);
+        if (colon != std::string::npos) {
+            auto open = payload.find('"', colon);
+            if (open != std::string::npos) {
+                auto close = payload.find('"', open + 1);
+                if (close != std::string::npos) {
+                    try { u.id = std::stoll(payload.substr(open + 1, close - open - 1)); }
+                    catch (...) { u.id = 0; }
+                }
+            }
+        }
+    }
+    auto em_pos = payload.find("\"email\"");
+    if (em_pos != std::string::npos) {
+        auto colon = payload.find(':', em_pos);
+        if (colon != std::string::npos) {
+            auto open = payload.find('"', colon);
+            if (open != std::string::npos) {
+                auto close = payload.find('"', open + 1);
+                if (close != std::string::npos)
+                    u.email = payload.substr(open + 1, close - open - 1);
+            }
+        }
+    }
+    auto rl_pos = payload.find("\"roles\"");
+    if (rl_pos != std::string::npos) {
+        auto colon = payload.find(':', rl_pos);
+        auto open  = payload.find('[', colon);
+        auto close = payload.find(']', open);
+        if (open != std::string::npos && close != std::string::npos)
+            u.roles_json = payload.substr(open, close - open + 1);
+    }
+    return u;
+}
+
+HandlerResult handle_me(const CurrentUser& user) {
+    const std::string& roles = user.roles_json.empty() ? std::string("[]") : user.roles_json;
+    std::string body = "{\"user\":{\"id\":" + std::to_string(user.id) +
+                       ",\"email\":" + json_quote(user.email) +
+                       ",\"roles\":" + roles + "}}";
+    return {200, std::move(body)};
 }
 
 }  // namespace app

@@ -1,5 +1,7 @@
 #include <string.h>
+#include <time.h>
 
+#include "../src/auth.h"
 #include "../src/cache.h"
 #include "../src/handlers.h"
 #include "vendor/unity.h"
@@ -159,6 +161,114 @@ static void test_check_api_key_ok(void) {
     TEST_ASSERT_EQUAL_INT(AUTH_OK, check_api_key("secret", 6, "secret"));
 }
 
+/* ---------- base64url ---------- */
+
+static void test_b64url_roundtrip(void) {
+    const unsigned char input[] = "Hello, World!";
+    char encoded[64];
+    int n = b64url_encode(input, sizeof(input) - 1, encoded, sizeof(encoded));
+    TEST_ASSERT_TRUE(n > 0);
+    unsigned char decoded[64];
+    int d = b64url_decode(encoded, n, decoded, sizeof(decoded));
+    TEST_ASSERT_EQUAL_INT((int) sizeof(input) - 1, d);
+    TEST_ASSERT_EQUAL_INT(0, memcmp(input, decoded, d));
+}
+
+/* ---------- jwt_sign_hs256 + verify roundtrip ---------- */
+
+static void test_jwt_sign_verify_roundtrip(void) {
+    const char *secret = "shhh-this-is-the-shared-secret";
+    long long now = (long long) time(NULL);
+    char payload[256];
+    int pn = snprintf(payload, sizeof(payload),
+                      "{\"sub\":\"42\",\"email\":\"a@b.c\",\"roles\":[\"writer\"],"
+                      "\"iat\":%lld,\"exp\":%lld}", now, now + 60);
+    char token[2048];
+    int tn = jwt_sign_hs256(payload, pn, secret, strlen(secret),
+                            token, sizeof(token));
+    TEST_ASSERT_TRUE(tn > 0);
+
+    char back[512];
+    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now,
+                             back, sizeof(back));
+    TEST_ASSERT_EQUAL_INT(0, r);
+    /* roundtripped payload must contain sub:"42" */
+    TEST_ASSERT_NOT_NULL(strstr(back, "\"sub\":\"42\""));
+}
+
+static void test_jwt_verify_rejects_wrong_secret(void) {
+    const char *secret = "good-secret";
+    long long now = (long long) time(NULL);
+    char payload[128];
+    snprintf(payload, sizeof(payload),
+             "{\"sub\":\"1\",\"exp\":%lld}", now + 60);
+    char token[2048];
+    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret),
+                            token, sizeof(token));
+    TEST_ASSERT_TRUE(tn > 0);
+    char back[256];
+    int r = jwt_verify_hs256(token, tn, "bad-secret", 10, now, back, sizeof(back));
+    TEST_ASSERT_NOT_EQUAL(0, r);
+}
+
+static void test_jwt_verify_rejects_expired(void) {
+    const char *secret = "good-secret";
+    long long now = (long long) time(NULL);
+    char payload[128];
+    snprintf(payload, sizeof(payload),
+             "{\"sub\":\"1\",\"exp\":%lld}", now - 10);
+    char token[2048];
+    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret),
+                            token, sizeof(token));
+    char back[256];
+    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now,
+                             back, sizeof(back));
+    TEST_ASSERT_NOT_EQUAL(0, r);
+}
+
+/* ---------- cookie_get_session ---------- */
+
+static void test_cookie_get_session_basic(void) {
+    const char *hdr = "session=abc.def.ghi; other=foo";
+    char out[64];
+    int n = cookie_get_session(hdr, strlen(hdr), out, sizeof(out));
+    TEST_ASSERT_EQUAL_INT(11, n);
+    TEST_ASSERT_EQUAL_STRING("abc.def.ghi", out);
+}
+
+static void test_cookie_get_session_other_first(void) {
+    const char *hdr = "lang=en; session=zzz";
+    char out[64];
+    int n = cookie_get_session(hdr, strlen(hdr), out, sizeof(out));
+    TEST_ASSERT_EQUAL_INT(3, n);
+    TEST_ASSERT_EQUAL_STRING("zzz", out);
+}
+
+static void test_cookie_get_session_missing(void) {
+    const char *hdr = "lang=en; theme=dark";
+    char out[64];
+    TEST_ASSERT_EQUAL_INT(-1, cookie_get_session(hdr, strlen(hdr), out, sizeof(out)));
+}
+
+/* ---------- roles_contains_any ---------- */
+
+static void test_roles_contains_any_hit(void) {
+    const char *roles = "[\"reader\",\"writer\"]";
+    const char *wanted[] = { "writer", "admin" };
+    TEST_ASSERT_TRUE(roles_contains_any(roles, strlen(roles), wanted, 2));
+}
+
+static void test_roles_contains_any_miss(void) {
+    const char *roles = "[\"reader\"]";
+    const char *wanted[] = { "writer", "admin" };
+    TEST_ASSERT_FALSE(roles_contains_any(roles, strlen(roles), wanted, 2));
+}
+
+static void test_roles_contains_any_empty(void) {
+    const char *wanted[] = { "writer" };
+    TEST_ASSERT_FALSE(roles_contains_any("[]", 2, wanted, 1));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_positive_long_accepts_simple);
@@ -182,5 +292,15 @@ int main(void) {
     RUN_TEST(test_check_api_key_invalid_wrong_length);
     RUN_TEST(test_check_api_key_invalid_wrong_value);
     RUN_TEST(test_check_api_key_ok);
+    RUN_TEST(test_b64url_roundtrip);
+    RUN_TEST(test_jwt_sign_verify_roundtrip);
+    RUN_TEST(test_jwt_verify_rejects_wrong_secret);
+    RUN_TEST(test_jwt_verify_rejects_expired);
+    RUN_TEST(test_cookie_get_session_basic);
+    RUN_TEST(test_cookie_get_session_other_first);
+    RUN_TEST(test_cookie_get_session_missing);
+    RUN_TEST(test_roles_contains_any_hit);
+    RUN_TEST(test_roles_contains_any_miss);
+    RUN_TEST(test_roles_contains_any_empty);
     return UNITY_END();
 }

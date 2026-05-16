@@ -1,9 +1,14 @@
 output "redis_endpoint" {
-  description = "Address of the primary Redis cache node."
-  value       = aws_elasticache_cluster.this.cache_nodes[0].address
+  description = "Primary endpoint address for the Redis replication group."
+  value       = aws_elasticache_replication_group.this.primary_endpoint_address
 }
 
 output "redis_port" {
-  description = "Port on which the Redis cluster accepts connections."
-  value       = 6379
+  description = "Port the Redis replication group accepts connections on."
+  value       = aws_elasticache_replication_group.this.port
+}
+
+output "transit_encryption_enabled" {
+  description = "Whether in-transit encryption (TLS) is enabled. Apps must connect via rediss:// / TLS when true."
+  value       = aws_elasticache_replication_group.this.transit_encryption_enabled
 }

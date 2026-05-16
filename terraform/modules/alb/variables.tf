@@ -45,3 +45,15 @@ variable "health_check_path" {
   type        = string
   default     = "/health"
 }
+
+variable "access_logs_bucket" {
+  description = "S3 bucket name for ALB access logs. Empty string disables access logs."
+  type        = string
+  default     = ""
+}
+
+variable "access_logs_prefix" {
+  description = "S3 key prefix for ALB access logs."
+  type        = string
+  default     = "alb"
+}

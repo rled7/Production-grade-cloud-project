@@ -8,6 +8,8 @@
 #include "db.h"
 #include "vendor/mongoose.h"
 
+struct access_log;
+
 typedef struct {
     db_ctx_t   *db;
     cache_ctx_t *cache;
@@ -16,7 +18,10 @@ typedef struct {
     size_t      api_prefix_len;
     int         cache_ttl_seconds;
     size_t      max_body_bytes;
-    const char *api_key;         /* NULL/"" => auth disabled */
+    const char *api_key;         /* NULL/"" => API-key gate disabled */
+    const char *jwt_secret;      /* NULL/"" => JWT verification disabled */
+    bool        cookie_secure;   /* true: set Secure attribute on cookies */
+    struct access_log *access_log;
 } app_ctx_t;
 
 /* Result of an API-key check. AUTH_DISABLED means the server is configured

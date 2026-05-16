@@ -39,12 +39,30 @@ function createDb(options = {}) {
   }
 
   async function ensureSchema() {
+    // Migrations are now authoritative (db/migrate.sh). This is a defensive
+    // no-op so the app keeps working in test/dev environments where the
+    // migration tool hasn't run yet.
     await query(
       'CREATE TABLE IF NOT EXISTS data (' +
         'id SERIAL PRIMARY KEY, ' +
         'content TEXT NOT NULL, ' +
         'created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())'
     );
+  }
+
+  async function findUserByEmail(email) {
+    const res = await query(
+      'SELECT id, email, password_hash, roles FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      id: Number(r.id),
+      email: r.email,
+      password_hash: r.password_hash,
+      roles: Array.isArray(r.roles) ? r.roles : [],
+    };
   }
 
   async function listAll() {
@@ -99,6 +117,7 @@ function createDb(options = {}) {
     listAll,
     getById,
     insert,
+    findUserByEmail,
     close,
     reset,
   };

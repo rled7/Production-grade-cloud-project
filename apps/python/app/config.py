@@ -22,6 +22,13 @@ def _env_str(name: str, default: str) -> str:
     return raw
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.lower() not in ("false", "0", "no", "off")
+
+
 @dataclass(frozen=True)
 class Config:
     port: int
@@ -36,7 +43,12 @@ class Config:
     cache_ttl_seconds: int
     redis_timeout_ms: int
     max_body_bytes: int
-    api_key: str  # empty string => auth disabled
+    api_key: str  # empty string => API-key gate disabled
+    jwt_secret: str  # empty string => JWT verification disabled
+    cookie_secure: bool
+    access_log_path: str
+    access_log_max_bytes: int
+    access_log_backups: int
 
     @property
     def redis_timeout_seconds(self) -> float:
@@ -69,4 +81,9 @@ def load_config() -> Config:
         redis_timeout_ms=_env_int("REDIS_TIMEOUT_MS", 200),
         max_body_bytes=_env_int("MAX_BODY_BYTES", 1048576),
         api_key=_env_str("API_KEY", ""),
+        jwt_secret=_env_str("JWT_SECRET", ""),
+        cookie_secure=_env_bool("COOKIE_SECURE", True),
+        access_log_path=_env_str("ACCESS_LOG_PATH", "./access.log"),
+        access_log_max_bytes=_env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024),
+        access_log_backups=_env_int("ACCESS_LOG_BACKUPS", 5),
     )

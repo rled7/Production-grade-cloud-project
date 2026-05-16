@@ -239,3 +239,43 @@ db_status_t db_insert(db_ctx_t *ctx, const char *content, db_row_t *out) {
     PQclear(r);
     return ok ? DB_OK : DB_INTERNAL;
 }
+
+db_status_t db_find_user_by_email(db_ctx_t *ctx, const char *email, db_user_t *out) {
+    if (!ctx || !email || !out) return DB_BAD_INPUT;
+    memset(out, 0, sizeof(*out));
+    if (!db_ensure(ctx)) return DB_UNAVAILABLE;
+
+    const char *vals[1] = { email };
+    int lens[1] = { (int) strlen(email) };
+    int fmts[1] = { 0 };
+    const char *sql =
+        "SELECT id, email, password_hash, COALESCE(to_jsonb(roles)::text, '[]') AS roles_json "
+        "FROM users WHERE LOWER(email) = LOWER($1)";
+    PGresult *r = PQexecParams(ctx->conn, sql, 1, NULL, vals, lens, fmts, 0);
+    ExecStatusType st = PQresultStatus(r);
+    if (st != PGRES_TUPLES_OK) {
+        log_warn("find_user_by_email failed: %s", PQerrorMessage(ctx->conn));
+        PQclear(r);
+        if (PQstatus(ctx->conn) != CONNECTION_OK) return DB_UNAVAILABLE;
+        return DB_INTERNAL;
+    }
+    if (PQntuples(r) == 0) { PQclear(r); return DB_NOT_FOUND; }
+    out->id            = strtol(PQgetvalue(r, 0, 0), NULL, 10);
+    out->email         = strdup(PQgetvalue(r, 0, 1));
+    out->password_hash = strdup(PQgetvalue(r, 0, 2));
+    out->roles_json    = strdup(PQgetvalue(r, 0, 3));
+    PQclear(r);
+    if (!out->email || !out->password_hash || !out->roles_json) {
+        db_user_free(out);
+        return DB_INTERNAL;
+    }
+    return DB_OK;
+}
+
+void db_user_free(db_user_t *user) {
+    if (!user) return;
+    free(user->email);
+    free(user->password_hash);
+    free(user->roles_json);
+    memset(user, 0, sizeof(*user));
+}

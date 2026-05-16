@@ -52,6 +52,19 @@ db_status_t db_query_one(db_ctx_t *ctx, long id, db_row_t *out);
 /* INSERT a row, returning the new row. content must be NUL-terminated. */
 db_status_t db_insert(db_ctx_t *ctx, const char *content, db_row_t *out);
 
+typedef struct {
+    long  id;
+    char *email;
+    char *password_hash;
+    char *roles_json;   /* JSON array literal, e.g. ["writer","admin"] */
+} db_user_t;
+
+/* SELECT id, email, password_hash, roles FROM users WHERE LOWER(email)=LOWER($1).
+ * On DB_OK fills out; on DB_NOT_FOUND nothing to free. */
+db_status_t db_find_user_by_email(db_ctx_t *ctx, const char *email, db_user_t *out);
+
+void db_user_free(db_user_t *user);
+
 void db_row_free(db_row_t *row);
 void db_rows_free(db_rows_t *rows);
 

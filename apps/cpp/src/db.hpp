@@ -41,6 +41,15 @@ class Database {
     std::optional<DataItem> get_by_id(long long id);
     DataItem insert(const std::string& content);
 
+    // User lookup for login. Returns nullopt if no row matches.
+    struct UserRow {
+        long long   id;
+        std::string email;
+        std::string password_hash;
+        std::string roles_json;  // raw JSON array, e.g. ["admin","writer"]
+    };
+    std::optional<UserRow> find_user_by_email(const std::string& email);
+
    private:
     pqxx::connection* ensure_conn();  // throws DatabaseUnavailable on failure
     void reset_conn();

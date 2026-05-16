@@ -114,7 +114,9 @@ function buildApp(overrides = {}) {
     cache,
     lang: overrides.lang || 'js',
     maxBodyBytes: overrides.maxBodyBytes || 1024, // small for size tests
-    apiKey: overrides.apiKey !== undefined ? overrides.apiKey : '',
+    apiKey:    overrides.apiKey    !== undefined ? overrides.apiKey    : '',
+    jwtSecret: overrides.jwtSecret !== undefined ? overrides.jwtSecret : '',
+    cookieSecure: overrides.cookieSecure !== undefined ? overrides.cookieSecure : false,
   });
   return { app, db, cache };
 }
@@ -422,5 +424,183 @@ describe('API key auth', () => {
     const { app } = buildApp({ apiKey: '' });
     const res = await request(app).get('/api/js/data');
     expect(res.status).toBe(200);
+  });
+});
+
+// ---------- JWT cookie auth ----------
+
+const bcryptjs = require('bcryptjs');
+const jsonwebtoken = require('jsonwebtoken');
+
+const JWT_SECRET = 'jwt-test-secret-aaaa';
+
+function userRow(overrides = {}) {
+  const pw = overrides.password || 'pa$$w0rd';
+  return {
+    id: overrides.id || 1,
+    email: overrides.email || 'alice@example.com',
+    password_hash: bcryptjs.hashSync(pw, 4),
+    roles: overrides.roles || ['reader'],
+    _password: pw,
+  };
+}
+
+function makeAuthDb(users = []) {
+  const base = makeFakeDb();
+  base.findUserByEmail = jest.fn(async (email) => {
+    return users.find((u) => u.email.toLowerCase() === email.toLowerCase()) || null;
+  });
+  return base;
+}
+
+function authedApp(users) {
+  const db = makeAuthDb(users);
+  const cache = makeFakeCache();
+  const app = createApp({
+    db, cache, lang: 'js',
+    apiKey: '',                   // skip api-key for auth-only tests
+    jwtSecret: JWT_SECRET,
+    cookieSecure: false,
+  });
+  return { app, db, cache };
+}
+
+describe('POST /api/js/auth/login', () => {
+  test('200 + session cookie on correct credentials', async () => {
+    const u = userRow({ roles: ['reader'] });
+    const { app } = authedApp([u]);
+    const res = await request(app).post('/api/js/auth/login')
+      .send({ email: u.email, password: u._password });
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe(u.email);
+    const cookie = res.headers['set-cookie'][0];
+    expect(cookie).toMatch(/^session=/);
+    expect(cookie).toMatch(/HttpOnly/);
+    expect(cookie).toMatch(/SameSite=Strict/);
+  });
+
+  test('401 on wrong password', async () => {
+    const u = userRow();
+    const { app } = authedApp([u]);
+    const res = await request(app).post('/api/js/auth/login')
+      .send({ email: u.email, password: 'nope' });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'invalid credentials' });
+  });
+
+  test('401 on unknown email', async () => {
+    const { app } = authedApp([userRow()]);
+    const res = await request(app).post('/api/js/auth/login')
+      .send({ email: 'ghost@x.com', password: 'whatever' });
+    expect(res.status).toBe(401);
+  });
+
+  test('400 on missing fields', async () => {
+    const { app } = authedApp([userRow()]);
+    const r1 = await request(app).post('/api/js/auth/login').send({});
+    expect(r1.status).toBe(400);
+    const r2 = await request(app).post('/api/js/auth/login').send({ email: 'a@b.c' });
+    expect(r2.status).toBe(400);
+  });
+});
+
+describe('GET /api/js/auth/me', () => {
+  test('401 with no cookie', async () => {
+    const { app } = authedApp([userRow()]);
+    const res = await request(app).get('/api/js/auth/me');
+    expect(res.status).toBe(401);
+  });
+
+  test('returns user when valid cookie present', async () => {
+    const u = userRow({ id: 42, email: 'alice@example.com', roles: ['admin'] });
+    const { app } = authedApp([u]);
+    const token = jsonwebtoken.sign(
+      { sub: '42', email: u.email, roles: u.roles },
+      JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: 60 }
+    );
+    const res = await request(app).get('/api/js/auth/me')
+      .set('Cookie', `session=${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.user).toEqual({ id: 42, email: u.email, roles: u.roles });
+  });
+
+  test('401 with an expired token', async () => {
+    const u = userRow();
+    const { app } = authedApp([u]);
+    const token = jsonwebtoken.sign(
+      { sub: '1', email: u.email, roles: u.roles },
+      JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: -10 }
+    );
+    const res = await request(app).get('/api/js/auth/me')
+      .set('Cookie', `session=${token}`);
+    expect(res.status).toBe(401);
+  });
+
+  test('401 with a tampered token', async () => {
+    const { app } = authedApp([userRow()]);
+    const bad = jsonwebtoken.sign({ sub: '1' }, 'wrong-secret', { algorithm: 'HS256', expiresIn: 60 });
+    const res = await request(app).get('/api/js/auth/me')
+      .set('Cookie', `session=${bad}`);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('protected data routes', () => {
+  test('GET /api/js/data → 401 with no cookie', async () => {
+    const { app } = authedApp([userRow()]);
+    const res = await request(app).get('/api/js/data');
+    expect(res.status).toBe(401);
+  });
+
+  test('GET /api/js/data → 200 with a valid cookie', async () => {
+    const u = userRow({ roles: ['reader'] });
+    const { app } = authedApp([u]);
+    // login to acquire cookie
+    const login = await request(app).post('/api/js/auth/login')
+      .send({ email: u.email, password: u._password });
+    const session = login.headers['set-cookie'][0].split(';')[0];
+    const res = await request(app).get('/api/js/data').set('Cookie', session);
+    expect(res.status).toBe(200);
+    expect(res.body.source).toBe('db');
+  });
+
+  test('POST /api/js/data → 403 when role lacks writer/admin', async () => {
+    const u = userRow({ roles: ['reader'] });
+    const { app } = authedApp([u]);
+    const login = await request(app).post('/api/js/auth/login')
+      .send({ email: u.email, password: u._password });
+    const session = login.headers['set-cookie'][0].split(';')[0];
+    const res = await request(app).post('/api/js/data')
+      .set('Cookie', session)
+      .set('Content-Type', 'application/json')
+      .send('{"content":"hi"}');
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden' });
+  });
+
+  test('POST /api/js/data → 201 when role is writer', async () => {
+    const u = userRow({ roles: ['writer'] });
+    const { app } = authedApp([u]);
+    const login = await request(app).post('/api/js/auth/login')
+      .send({ email: u.email, password: u._password });
+    const session = login.headers['set-cookie'][0].split(';')[0];
+    const res = await request(app).post('/api/js/data')
+      .set('Cookie', session)
+      .set('Content-Type', 'application/json')
+      .send('{"content":"hi"}');
+    expect(res.status).toBe(201);
+  });
+});
+
+describe('POST /api/js/auth/logout', () => {
+  test('clears session cookie and returns 204', async () => {
+    const { app } = authedApp([userRow()]);
+    const res = await request(app).post('/api/js/auth/logout');
+    expect(res.status).toBe(204);
+    const cookie = res.headers['set-cookie'][0];
+    expect(cookie).toMatch(/^session=;/);
+    expect(cookie).toMatch(/Max-Age=0/);
   });
 });

@@ -26,3 +26,15 @@ variable "az_count" {
   type        = number
   default     = 2
 }
+
+variable "enable_flow_logs" {
+  description = "Provision VPC flow logs to a CloudWatch log group."
+  type        = bool
+  default     = true
+}
+
+variable "flow_logs_retention_days" {
+  description = "CloudWatch log group retention in days for VPC flow logs."
+  type        = number
+  default     = 30
+}

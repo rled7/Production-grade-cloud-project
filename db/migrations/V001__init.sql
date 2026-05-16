@@ -1,6 +1,6 @@
--- Shared database schema for all four language implementations.
--- Applies identically to local docker-compose Postgres and production RDS.
--- Each application also runs this CREATE TABLE IF NOT EXISTS on startup for resiliency.
+-- V001: initial schema — the data table and the schema_migrations tracker.
+-- The schema_migrations table is created by db/migrate.sh before any
+-- migration runs, so don't recreate it here.
 
 CREATE TABLE IF NOT EXISTS data (
     id          SERIAL PRIMARY KEY,

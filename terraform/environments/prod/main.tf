@@ -90,6 +90,74 @@ module "alb" {
   web_acl_arn       = module.waf.web_acl_arn
   certificate_arn   = aws_acm_certificate_validation.this.certificate_arn
   languages         = var.languages
+
+  access_logs_bucket = aws_s3_bucket.alb_logs.bucket
+  access_logs_prefix = "alb"
+}
+
+# ----- ALB access-logs S3 bucket -----
+#
+# The bucket policy grants the regional ELB service account permission to
+# PutObject under the configured prefix. AWS docs:
+#   https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html
+
+data "aws_elb_service_account" "main" {}
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "alb_logs" {
+  bucket        = "${var.project_name}-alb-logs-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  bucket                  = aws_s3_bucket.alb_logs.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 90
+    }
+  }
+}
+
+data "aws_iam_policy_document" "alb_logs" {
+  statement {
+    sid     = "ELBAccountWrite"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    principals {
+      type        = "AWS"
+      identifiers = [data.aws_elb_service_account.main.arn]
+    }
+    resources = ["${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
+  }
+}
+
+resource "aws_s3_bucket_policy" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+  policy = data.aws_iam_policy_document.alb_logs.json
 }
 
 # Friendly DNS alias for the ALB.
@@ -123,9 +191,11 @@ module "ecs" {
   db_username = var.db_username
   db_password = var.db_password
   api_key     = var.api_key
+  jwt_secret  = var.jwt_secret
 
   redis_host = module.elasticache.redis_endpoint
   redis_port = module.elasticache.redis_port
+  redis_tls  = module.elasticache.transit_encryption_enabled
 
   desired_count = var.desired_count
   cpu           = var.task_cpu

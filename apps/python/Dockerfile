@@ -34,7 +34,9 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY app /app/app
 
-RUN chown -R appuser:appgroup /app
+RUN chown -R appuser:appgroup /app \
+    && mkdir -p /var/log/app \
+    && chown appuser:appgroup /var/log/app
 
 USER appuser
 

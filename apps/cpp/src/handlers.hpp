@@ -41,7 +41,16 @@ struct AppDeps {
     std::string app_lang;
     int cache_ttl_seconds = 30;
     std::size_t max_body_bytes = 1048576;
-    std::string api_key;          // empty => auth disabled
+    std::string api_key;          // empty => API-key gate disabled
+    std::string jwt_secret;       // empty => JWT verification disabled
+    bool cookie_secure = true;
+};
+
+// Decoded session claims (after JWT verify).
+struct CurrentUser {
+    long long   id = 0;
+    std::string email;
+    std::string roles_json;  // raw JSON array
 };
 
 // API-key check result. Disabled means the server is configured without a
@@ -61,5 +70,17 @@ HandlerResult handle_health(const AppDeps& deps);
 HandlerResult handle_list(AppDeps& deps);
 HandlerResult handle_get_one(AppDeps& deps, std::string_view id_str);
 HandlerResult handle_create(AppDeps& deps, const std::string& body);
+
+// Returns { 200, body, set-cookie } on success; { 401, body, "" } otherwise.
+struct LoginResult {
+    int         status = 401;
+    std::string body;
+    std::string set_cookie;
+};
+LoginResult handle_login(AppDeps& deps, const std::string& body);
+HandlerResult handle_me(const CurrentUser& user);
+
+// Parse "sub":<id>, "email":"...", "roles":[...] out of a JWT payload JSON.
+CurrentUser parse_user_payload(const std::string& payload);
 
 }  // namespace app

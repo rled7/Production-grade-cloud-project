@@ -69,6 +69,18 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "jwt_secret" {
+  description = "HMAC-SHA256 signing secret for the session JWT cookie. Stored in Secrets Manager and injected into each task. Empty disables JWT verification."
+  type        = string
+  sensitive   = true
+}
+
+variable "redis_tls" {
+  description = "Whether the ElastiCache cluster has in-transit encryption enabled. Apps connect via TLS when true."
+  type        = bool
+  default     = true
+}
+
 variable "redis_host" {
   description = "Redis hostname."
   type        = string

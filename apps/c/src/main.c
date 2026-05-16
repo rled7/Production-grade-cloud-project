@@ -1,8 +1,11 @@
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#include "access_log.h"
 #include "cache.h"
 #include "db.h"
 #include "handlers.h"
@@ -25,10 +28,31 @@ static int env_int(const char *k, int d) {
     return (v && *v) ? atoi(v) : d;
 }
 
+static void log_access(app_ctx_t *app, struct mg_connection *c,
+                       struct mg_http_message *hm) {
+    if (!app->access_log) return;
+    char ts[40];
+    time_t now = time(NULL);
+    struct tm tm; gmtime_r(&now, &tm);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+
+    char remote[64];
+    mg_snprintf(remote, sizeof(remote), "%M", mg_print_ip, &c->rem);
+
+    char line[1024];
+    int n = snprintf(line, sizeof(line),
+                     "%s - - [%s] \"%.*s %.*s HTTP/1.1\"",
+                     remote, ts,
+                     (int) hm->method.len, hm->method.buf,
+                     (int) hm->uri.len, hm->uri.buf);
+    if (n > 0) access_log_write(app->access_log, line, (size_t) n);
+}
+
 static void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
     if (ev != MG_EV_HTTP_MSG) return;
     struct mg_http_message *hm = (struct mg_http_message *) ev_data;
     app_ctx_t *app = (app_ctx_t *) c->fn_data;
+    log_access(app, c, hm);
     handle_request(c, hm, app);
 }
 
@@ -50,6 +74,13 @@ int main(void) {
     int redis_timeout = env_int("REDIS_TIMEOUT_MS", 200);
     size_t max_body = (size_t) env_int("MAX_BODY_BYTES", 1048576);
     const char *api_key = env_or("API_KEY", "");
+    const char *jwt_secret = env_or("JWT_SECRET", "");
+    const char *cookie_secure_s = env_or("COOKIE_SECURE", "true");
+    bool cookie_secure = !(strcmp(cookie_secure_s, "false") == 0 ||
+                           strcmp(cookie_secure_s, "0")     == 0);
+    const char *access_log_path = env_or("ACCESS_LOG_PATH", "./access.log");
+    size_t access_log_max_bytes = (size_t) env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024);
+    int access_log_backups = env_int("ACCESS_LOG_BACKUPS", 5);
 
     app_ctx_t app_ctx;
     memset(&app_ctx, 0, sizeof(app_ctx));
@@ -57,9 +88,13 @@ int main(void) {
     app_ctx.cache_ttl_seconds = ttl;
     app_ctx.max_body_bytes = max_body;
     app_ctx.api_key = api_key;
-    if (!api_key[0]) {
-        fprintf(stderr, "[warn] API_KEY env var is empty — auth is DISABLED.\n");
-    }
+    app_ctx.jwt_secret = jwt_secret;
+    app_ctx.cookie_secure = cookie_secure;
+    app_ctx.access_log = access_log_open(access_log_path, access_log_max_bytes,
+                                         access_log_backups);
+    if (!api_key[0])    fprintf(stderr, "[warn] API_KEY empty — API-key gate DISABLED\n");
+    if (!jwt_secret[0]) fprintf(stderr, "[warn] JWT_SECRET empty — JWT verification DISABLED\n");
+    if (!app_ctx.access_log) fprintf(stderr, "[warn] access log file unavailable (%s)\n", access_log_path);
     int n = build_api_prefix(app_lang, app_ctx.api_prefix,
                              sizeof(app_ctx.api_prefix));
     if (n < 0) {

@@ -75,3 +75,20 @@ Timestamps are UTC, recorded at phase completion.
 - [x] docker-compose.yml: API_KEY=local-dev-key on all services - 2026-05-15 18:00 UTC
 - [x] Benchmark + chaos scripts: X-API-Key + no-key/wrong-key probes - 2026-05-15 18:00 UTC
 - [x] README + CHANGELOG (1.1.0) updates - 2026-05-15 18:00 UTC
+
+## Post-1.0: Migrations + JWT cookie auth + Access logging + Security infra
+- [x] db/migrations/{V001__init,V002__users}.sql - 2026-05-16 00:00 UTC
+- [x] db/migrate.sh with up/status/seed-admin - 2026-05-16 00:00 UTC
+- [x] docker-compose migrate one-shot service + JWT/COOKIE env vars - 2026-05-16 00:00 UTC
+- [x] JS: auth.js + access_log.js + login/logout/me + role gate + tests (60 total) - 2026-05-16 00:00 UTC
+- [x] Python: auth.py + access_log.py + login/logout/me + role gate + tests (57 total) - 2026-05-16 00:00 UTC
+- [x] C: HS256 via OpenSSL HMAC + crypt_r bcrypt + cookie parsing + rotating log + tests (31 total) - 2026-05-16 00:00 UTC
+- [x] C++: HS256 via OpenSSL + crypt_r bcrypt + Crow routes + rotating log + tests (32 total) - 2026-05-16 00:00 UTC
+- [x] Live smoke test of C and C++ auth end-to-end against Postgres + Redis - 2026-05-16 00:00 UTC
+- [x] ElastiCache: at-rest + in-transit encryption (replication_group) - 2026-05-16 00:00 UTC
+- [x] ALB access logs to encrypted S3 bucket - 2026-05-16 00:00 UTC
+- [x] WAF logging to CloudWatch log group - 2026-05-16 00:00 UTC
+- [x] VPC flow logs to CloudWatch log group + IAM role - 2026-05-16 00:00 UTC
+- [x] JWT_SECRET injected through Secrets Manager into every ECS task - 2026-05-16 00:00 UTC
+- [x] CI: terraform plan (prod) job for PR rehearsal - 2026-05-16 00:00 UTC
+- [x] README + CHANGELOG 1.2.0 + TRACKER updated - 2026-05-16 00:00 UTC

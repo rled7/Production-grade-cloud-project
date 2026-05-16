@@ -8,3 +8,15 @@ variable "rate_limit" {
   type        = number
   default     = 2000
 }
+
+variable "enable_logging" {
+  description = "Create the CloudWatch log group and wire WAFv2 logging to it."
+  type        = bool
+  default     = true
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log group retention in days for WAF logs."
+  type        = number
+  default     = 30
+}

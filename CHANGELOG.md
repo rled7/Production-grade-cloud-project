@@ -3,6 +3,57 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] - 2026-05-16
+
+### Added — JWT cookie auth + protected routes + access logging
+- DB migrations: `db/migrations/V001__init.sql`, `V002__users.sql`, plus a
+  canonical `db/migrate.sh` runner with `up`, `status`, and `seed-admin`
+  subcommands. Tracking via `schema_migrations` table. Each migration runs
+  in its own transaction together with its tracker insert.
+- docker-compose: new one-shot `migrate` service installs psql + bcrypt,
+  runs `migrate.sh up`, seeds an admin user, then exits. Every app
+  `depends_on: migrate` so the schema is always current at boot.
+- Users table with bcrypt password_hash + roles[]. Login flow in every
+  language: `POST /api/<lang>/auth/login` returns a HttpOnly + SameSite=Strict
+  + Secure session cookie holding an HS256 JWT (sub, email, roles, iat, exp).
+- `POST /api/<lang>/auth/logout` clears the cookie. `GET /api/<lang>/auth/me`
+  returns the current user (requires valid JWT).
+- All `/api/<lang>/data*` routes now require a valid JWT (401 otherwise).
+  `POST /api/<lang>/data` additionally requires role `writer` or `admin`
+  (403 otherwise).
+- Per-language pure auth helpers — `check_api_key`, `jwt_sign_hs256`,
+  `jwt_verify_hs256`, `cookie_get_session`, `roles_contains_any`, bcrypt
+  verify — implemented with constant-time comparison and unit-tested.
+- Request access logging with rotation in every app: JS uses
+  morgan+rotating-file-stream, Python uses RotatingFileHandler +
+  middleware, C/C++ implement a small in-process rotator. All also mirror
+  to stdout for CloudWatch.
+
+### Security infrastructure (Terraform)
+- ElastiCache: replaced `aws_elasticache_cluster` with
+  `aws_elasticache_replication_group`; `at_rest_encryption_enabled` and
+  `transit_encryption_enabled` default `true`; new `redis_tls` flag flows
+  through to ECS tasks.
+- ALB: `drop_invalid_header_fields = true`; access logs written to a new
+  encrypted, public-access-blocked, lifecycle-90-day S3 bucket with the
+  correct ELB-service-account bucket policy.
+- WAF: CloudWatch log group named `aws-waf-logs-<project>` plus a
+  `wafv2_web_acl_logging_configuration` resource.
+- VPC: optional flow logs to a CloudWatch log group with a dedicated IAM
+  role for the `vpc-flow-logs` service. Enabled by default.
+- ECS task secrets: Secrets Manager JSON now also contains `JWT_SECRET`,
+  injected into every task. New `COOKIE_SECURE=true`, `ACCESS_LOG_PATH`
+  env vars on every task.
+- New CI job `terraform plan (prod)`: runs `terraform plan` against the
+  prod env on PRs when AWS deploy role + tfvars secrets are configured.
+
+### Test totals (before → after this release)
+- JS:     47 → 60
+- Python: 44 → 57
+- C:      21 → 31
+- C++:    22 → 32
+- Total:  134 → **180**
+
 ## [1.1.0] - 2026-05-15
 
 ### Added — API-key authentication

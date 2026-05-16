@@ -75,6 +75,7 @@ resource "aws_secretsmanager_secret_version" "db" {
   secret_string = jsonencode({
     DB_PASSWORD = var.db_password
     API_KEY     = var.api_key
+    JWT_SECRET  = var.jwt_secret
   })
 }
 
@@ -160,9 +161,12 @@ resource "aws_ecs_task_definition" "this" {
         { name = "DB_USER", value = var.db_username },
         { name = "REDIS_HOST", value = var.redis_host },
         { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_TLS", value = var.redis_tls ? "true" : "false" },
         { name = "CACHE_TTL_SECONDS", value = tostring(var.cache_ttl_seconds) },
         { name = "REDIS_TIMEOUT_MS", value = tostring(var.redis_timeout_ms) },
         { name = "MAX_BODY_BYTES", value = tostring(var.max_body_bytes) },
+        { name = "COOKIE_SECURE", value = "true" },
+        { name = "ACCESS_LOG_PATH", value = "/var/log/app/access.log" },
       ]
 
       secrets = [
@@ -173,6 +177,10 @@ resource "aws_ecs_task_definition" "this" {
         {
           name      = "API_KEY"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:API_KEY::"
+        },
+        {
+          name      = "JWT_SECRET"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:JWT_SECRET::"
         }
       ]
 

@@ -18,6 +18,10 @@ db_password = "CHANGE-ME-USE-A-STRONG-PASSWORD"
 # Generate with: openssl rand -hex 32
 api_key = "CHANGE-ME-USE-A-STRONG-API-KEY"
 
+# JWT signing secret (HMAC-SHA256) — used to sign session cookies.
+# Generate with: openssl rand -hex 64
+jwt_secret = "CHANGE-ME-USE-A-LONG-RANDOM-SECRET-NO-LESS-THAN-32-BYTES"
+
 # Optional sizing overrides
 # db_instance_class = "db.t3.micro"
 # db_multi_az       = true

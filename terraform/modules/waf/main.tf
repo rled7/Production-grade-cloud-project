@@ -95,3 +95,20 @@ resource "aws_wafv2_web_acl" "this" {
     Project = var.project_name
   }
 }
+
+# CloudWatch log group for WAF logs. Name MUST start with "aws-waf-logs-".
+resource "aws_cloudwatch_log_group" "waf" {
+  count             = var.enable_logging ? 1 : 0
+  name              = "aws-waf-logs-${var.project_name}"
+  retention_in_days = var.log_retention_days
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "this" {
+  count                   = var.enable_logging ? 1 : 0
+  resource_arn            = aws_wafv2_web_acl.this.arn
+  log_destination_configs = [aws_cloudwatch_log_group.waf[0].arn]
+}
