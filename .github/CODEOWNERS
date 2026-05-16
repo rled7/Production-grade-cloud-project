@@ -1,0 +1,18 @@
+# Default owner for everything. Replace with the actual team/handle.
+*       @rled7
+
+# Application code — should the team grow, split per-language ownership here.
+/apps/js/         @rled7
+/apps/python/     @rled7
+/apps/c/          @rled7
+/apps/cpp/        @rled7
+/apps/migrator/   @rled7
+
+# Infrastructure changes — pull in a separate reviewer once the team has one.
+/terraform/             @rled7
+/.github/workflows/     @rled7
+/db/                    @rled7
+
+# Security-sensitive surfaces.
+/security/      @rled7
+SECURITY.md     @rled7

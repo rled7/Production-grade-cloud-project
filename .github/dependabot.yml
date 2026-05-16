@@ -1,0 +1,38 @@
+version: 2
+updates:
+  # Container base images for all four apps plus the migrator.
+  - package-ecosystem: docker
+    directory: /apps/js
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/python
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/c
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/cpp
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/migrator
+    schedule: { interval: weekly }
+
+  # GitHub Actions versions.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+
+  # Language package managers (where lockfiles exist).
+  - package-ecosystem: npm
+    directory: /apps/js
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /apps/python
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+
+  # Terraform provider pin (the aws ~> 5.0 in modules).
+  - package-ecosystem: terraform
+    directory: /terraform/environments/prod
+    schedule: { interval: weekly }
