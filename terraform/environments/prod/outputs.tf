@@ -37,3 +37,13 @@ output "redis_endpoint" {
   description = "ElastiCache Redis endpoint (private)."
   value       = module.elasticache.redis_endpoint
 }
+
+output "migrator_ecr_repository_url" {
+  description = "ECR repository for the DB migrator image (apps/migrator). CI pushes here before invoking aws ecs run-task."
+  value       = module.ecs.migrator_ecr_repository_url
+}
+
+output "migrator_task_definition_family" {
+  description = "Task definition family CI invokes for migrations."
+  value       = module.ecs.migrator_task_definition_family
+}

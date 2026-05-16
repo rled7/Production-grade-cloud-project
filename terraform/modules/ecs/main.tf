@@ -278,3 +278,108 @@ resource "aws_appautoscaling_policy" "cpu" {
     }
   }
 }
+
+############################
+# Migrator: ECR repo + task definition + log group + SSM params
+#
+# Idea: the CI workflow builds and pushes apps/migrator → this ECR repo,
+# then `aws ecs run-task` invokes this task definition inside the VPC's
+# private subnets so it can reach RDS. The task exits 0 on success and
+# non-zero on any migration failure; CI gates the deploy job on that.
+############################
+resource "aws_ecr_repository" "migrator" {
+  name         = "${var.project_name}-migrator"
+  force_delete = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Project = var.project_name
+    Role    = "migrator"
+  }
+}
+
+resource "aws_cloudwatch_log_group" "migrator" {
+  name              = "/ecs/${var.project_name}/migrator"
+  retention_in_days = 14
+
+  tags = {
+    Project = var.project_name
+    Role    = "migrator"
+  }
+}
+
+resource "aws_ecs_task_definition" "migrator" {
+  family                   = "${var.project_name}-migrator"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.task_execution.arn
+  task_role_arn            = aws_iam_role.task.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "migrator"
+      image     = "${aws_ecr_repository.migrator.repository_url}:${var.image_tag}"
+      essential = true
+
+      environment = [
+        { name = "PGHOST", value = var.db_host },
+        { name = "PGPORT", value = tostring(var.db_port) },
+        { name = "PGDATABASE", value = var.db_name },
+        { name = "PGUSER", value = var.db_username },
+      ]
+
+      secrets = [
+        {
+          name      = "PGPASSWORD"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:DB_PASSWORD::"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.migrator.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "migrator"
+        }
+      }
+    }
+  ])
+
+  tags = {
+    Project = var.project_name
+    Role    = "migrator"
+  }
+}
+
+# Expose the network config the CI workflow needs to run the migrator task.
+# Both are read by the `migrate` job in .github/workflows/deploy.yml via
+# `aws ssm get-parameter`, so you don't need to remember them.
+resource "aws_ssm_parameter" "migrator_subnets" {
+  name      = "/${var.project_name}/migrator/subnets"
+  type      = "StringList"
+  value     = join(",", var.private_subnet_ids)
+  overwrite = true
+
+  tags = {
+    Project = var.project_name
+    Role    = "migrator"
+  }
+}
+
+resource "aws_ssm_parameter" "migrator_security_group" {
+  name      = "/${var.project_name}/migrator/security-group"
+  type      = "String"
+  value     = var.ecs_sg_id
+  overwrite = true
+
+  tags = {
+    Project = var.project_name
+    Role    = "migrator"
+  }
+}

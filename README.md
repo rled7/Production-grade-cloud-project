@@ -303,7 +303,67 @@ terraform apply
 #    URLs in `terraform output ecr_repository_urls`, then roll the services:
 aws ecs update-service --cluster ml-ecs-benchmark --service ml-ecs-benchmark-js  --force-new-deployment
 # ...repeat for python, c, cpp.
+
+# 6. Apply DB migrations. On main this runs as the `migrate` CI job (built
+#    from apps/migrator and invoked via `aws ecs run-task`). For an initial
+#    bootstrap, push the migrator image too and run it manually:
+docker build -t "$(terraform output -raw migrator_ecr_repository_url):latest" \
+             -f apps/migrator/Dockerfile .
+docker push "$(terraform output -raw migrator_ecr_repository_url):latest"
+SUBNETS=$(aws ssm get-parameter --name "/ml-ecs-benchmark/migrator/subnets"        --query Parameter.Value --output text)
+SG=$(aws ssm get-parameter      --name "/ml-ecs-benchmark/migrator/security-group" --query Parameter.Value --output text)
+aws ecs run-task --cluster ml-ecs-benchmark --launch-type FARGATE \
+  --task-definition "$(terraform output -raw migrator_task_definition_family)" \
+  --network-configuration "awsvpcConfiguration={subnets=[\"${SUBNETS//,/\",\"}\"],securityGroups=[\"$SG\"],assignPublicIp=DISABLED}"
 ```
+
+### GitHub Actions setup (one-time)
+
+The CI workflow assumes AWS access via OIDC — no long-lived AWS keys are
+stored in GitHub. Create an OIDC provider + role in your AWS account, then
+populate the following GitHub secrets / vars on the repo:
+
+| Kind   | Name                       | Value                                                                                   |
+|--------|----------------------------|-----------------------------------------------------------------------------------------|
+| Secret | `AWS_DEPLOY_ROLE_ARN`      | ARN of the IAM role CI assumes (trust policy below).                                    |
+| Secret | `TF_DB_PASSWORD`           | Same value as `db_password` in terraform.tfvars (used by the `terraform plan` job).     |
+| Secret | `TF_API_KEY`               | Same as `api_key`.                                                                      |
+| Secret | `TF_JWT_SECRET`            | Same as `jwt_secret`.                                                                   |
+| Var    | `TF_DOMAIN_NAME`           | Same as `domain_name`.                                                                  |
+| Var    | `TF_ROUTE53_ZONE_ID`       | Same as `route53_zone_id`.                                                              |
+| Var    | `RUN_TERRAFORM_PLAN`       | Set to `"true"` to enable the `terraform plan` job on pull requests.                    |
+
+Trust policy for the deploy role (replace `<ACCOUNT_ID>`, `<OWNER>`, `<REPO>`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+      },
+      "StringLike": {
+        "token.actions.githubusercontent.com:sub": "repo:<OWNER>/<REPO>:ref:refs/heads/main"
+      }
+    }
+  }]
+}
+```
+
+Minimum permissions the role needs:
+
+- `AmazonEC2ContainerRegistryFullAccess` (push to ECR + run image scans)
+- `AmazonECS_FullAccess` (run-task for migrations, update-service for rolls,
+  wait services-stable, describe-tasks)
+- `ssm:GetParameter` on `/<project>/migrator/*`
+- For the `terraform plan` job only: read access on the resources the modules
+  manage (VPC, RDS, ElastiCache, ALB, WAFv2, IAM, Secrets Manager, S3, Route53).
+  In practice attach `ReadOnlyAccess` plus write on the project's TF state
+  bucket.
 
 ## Running the benchmark and chaos suite
 

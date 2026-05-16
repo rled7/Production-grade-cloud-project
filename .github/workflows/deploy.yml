@@ -195,14 +195,75 @@ jobs:
           docker push "$REPO:latest"
 
   # ----------------------------------------------------------------------
+  # DB migrations — build/push apps/migrator and invoke it as a one-shot
+  # Fargate task inside the VPC's private subnets. Gates the deploy job:
+  # if migrations fail, services do not roll.
+  # ----------------------------------------------------------------------
+
+  migrate:
+    name: db migrate (prod)
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build & push migrator image
+        run: |
+          REPO="${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-migrator"
+          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:latest" \
+            -f apps/migrator/Dockerfile .
+          docker push "$REPO:${{ github.sha }}"
+          docker push "$REPO:latest"
+      - name: Read network config from SSM
+        id: ssm
+        run: |
+          SUBNETS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/migrator/subnets" \
+            --query 'Parameter.Value' --output text)
+          SG=$(aws ssm get-parameter --name "/${PROJECT_NAME}/migrator/security-group" \
+            --query 'Parameter.Value' --output text)
+          # Convert "subnet-aaa,subnet-bbb" -> "subnet-aaa","subnet-bbb"
+          QUOTED_SUBNETS=$(echo "$SUBNETS" | sed 's/^/"/;s/,/","/g;s/$/"/')
+          echo "subnets=$QUOTED_SUBNETS" >> "$GITHUB_OUTPUT"
+          echo "sg=$SG" >> "$GITHUB_OUTPUT"
+      - name: Run migrator task
+        run: |
+          NET='awsvpcConfiguration={subnets=[${{ steps.ssm.outputs.subnets }}],securityGroups=["${{ steps.ssm.outputs.sg }}"],assignPublicIp=DISABLED}'
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --network-configuration "$NET" \
+            --task-definition "${PROJECT_NAME}-migrator" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "task=$TASK_ARN"
+          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+          echo "migrator exit code: $EXIT  reason: $REASON"
+          if [ "$EXIT" != "0" ]; then
+            echo "::error::migrations failed (exit $EXIT). Aborting deploy."
+            exit 1
+          fi
+
+  # ----------------------------------------------------------------------
   # Force ECS to redeploy each service with the new "latest" image.
-  # Only runs after every image has been built, scanned, and pushed.
+  # Gated by migrate so a schema-changing release does not roll until the
+  # migration is applied.
   # ----------------------------------------------------------------------
 
   deploy:
     name: roll services
     runs-on: ubuntu-latest
-    needs: [build-and-push]
+    needs: [build-and-push, migrate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4

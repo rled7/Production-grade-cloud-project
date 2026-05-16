@@ -39,6 +39,9 @@ services:
 
   # One-shot: apply pending migrations and seed an admin user, then exit.
   # Every app depends_on: migrate so it cannot start until the schema is ready.
+  # ADMIN_EMAIL / ADMIN_PASSWORD seed a single admin user on every up. Override
+  # in .env (or `ADMIN_PASSWORD=... docker compose up`) for any non-throwaway
+  # environment — the defaults below are intentionally insecure dev values.
   migrate:
     image: python:3.12-slim
     depends_on:
@@ -53,6 +56,8 @@ services:
       PGUSER: appuser
       PGPASSWORD: apppass
       PGDATABASE: appdb
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-supersecret}
     entrypoint: ["bash", "-c"]
     command:
       - |
@@ -60,7 +65,10 @@ services:
         apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null
         pip install -q bcrypt
         /db/migrate.sh up
-        /db/migrate.sh seed-admin --email admin@local --password supersecret
+        if [ "$$ADMIN_PASSWORD" = "supersecret" ]; then
+          echo "[migrate] WARN: using default admin password. Set ADMIN_PASSWORD before any non-throwaway use." >&2
+        fi
+        /db/migrate.sh seed-admin --email "$$ADMIN_EMAIL" --password "$$ADMIN_PASSWORD"
 
   js:
     build: ./apps/js

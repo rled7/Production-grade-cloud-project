@@ -104,3 +104,10 @@ Timestamps are UTC, recorded at phase completion.
 - [x] benchmark/run_compare.sh ranks all four by req/sec - 2026-05-16 01:00 UTC
 - [x] benchmark/chaos_test.sh updated for LOCAL=1 - 2026-05-16 01:00 UTC
 - [x] Test totals: 70 JS / 67 Py / 39 C / 42 C++ = 218 - 2026-05-16 01:00 UTC
+
+## Post-1.0: CI migrations + OIDC docs + admin parameterization (1.4.0)
+- [x] apps/migrator/Dockerfile - 2026-05-16 02:00 UTC
+- [x] ECS migrator task definition + ECR repo + SSM params - 2026-05-16 02:00 UTC
+- [x] CI `migrate` job between build-and-push and deploy - 2026-05-16 02:00 UTC
+- [x] README: GitHub Actions setup + OIDC trust policy + bootstrap recipe - 2026-05-16 02:00 UTC
+- [x] docker-compose admin user parameterized (ADMIN_EMAIL/ADMIN_PASSWORD) - 2026-05-16 02:00 UTC

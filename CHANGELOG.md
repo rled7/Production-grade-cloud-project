@@ -3,6 +3,28 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] - 2026-05-16
+
+### Added — Migrations in CI, OIDC docs, admin credentials parameterized
+- New `apps/migrator/` image (Python + postgresql-client + bcrypt + `db/`).
+  CI builds and pushes it to a dedicated `${project}-migrator` ECR repo on
+  every push to main.
+- ECS migrator task definition in the `ecs` module (Fargate, awsvpc, runs in
+  the private subnets, pulls DB password from the existing app secret).
+- SSM parameters `/${project}/migrator/{subnets,security-group}` so CI can
+  resolve the network config without hardcoding.
+- New `migrate` job in `.github/workflows/deploy.yml`. Runs `aws ecs run-task`
+  on the migrator task definition, waits for it to stop, and **fails the
+  whole workflow if the migration exited non-zero**. The `deploy` job now
+  depends on `migrate`, so a schema-changing release cannot roll services
+  until the schema is applied.
+- README gained an "GitHub Actions setup" section listing every required
+  secret/var and a copy-paste OIDC trust policy for the deploy role, plus
+  a bootstrap recipe for an initial manual `aws ecs run-task` invocation.
+- `docker-compose.yml` `migrate` service now reads `ADMIN_EMAIL` and
+  `ADMIN_PASSWORD` from env (defaults match the previous hardcoded values,
+  but it warns on stderr when the default password is in use).
+
 ## [1.3.0] - 2026-05-16
 
 ### Added — Redis TLS, edge-case suites, per-language benchmarks
