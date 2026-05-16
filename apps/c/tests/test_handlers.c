@@ -328,6 +328,30 @@ static void test_check_api_key_empty_presented_with_expected_set(void) {
     TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key("", 0, "x"));
 }
 
+static void test_check_api_key_dual_both_empty_disabled(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_DISABLED, check_api_key_dual(NULL, 0, NULL, NULL));
+    TEST_ASSERT_EQUAL_INT(AUTH_DISABLED, check_api_key_dual("x", 1, "", ""));
+}
+
+static void test_check_api_key_dual_primary_match(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_OK, check_api_key_dual("old", 3, "old", "new"));
+}
+
+static void test_check_api_key_dual_secondary_match(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_OK, check_api_key_dual("new", 3, "old", "new"));
+}
+
+static void test_check_api_key_dual_neither_matches(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key_dual("nope", 4, "old", "new"));
+}
+
+static void test_check_api_key_dual_only_secondary_set(void) {
+    /* primary off, secondary still enforces. */
+    TEST_ASSERT_EQUAL_INT(AUTH_OK,      check_api_key_dual("new", 3, "", "new"));
+    TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key_dual("old", 3, "", "new"));
+    TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key_dual(NULL, 0, "", "new"));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_positive_long_accepts_simple);
@@ -369,5 +393,10 @@ int main(void) {
     RUN_TEST(test_jwt_verify_malformed_tokens);
     RUN_TEST(test_roles_contains_any_malformed);
     RUN_TEST(test_check_api_key_empty_presented_with_expected_set);
+    RUN_TEST(test_check_api_key_dual_both_empty_disabled);
+    RUN_TEST(test_check_api_key_dual_primary_match);
+    RUN_TEST(test_check_api_key_dual_secondary_match);
+    RUN_TEST(test_check_api_key_dual_neither_matches);
+    RUN_TEST(test_check_api_key_dual_only_secondary_set);
     return UNITY_END();
 }

@@ -68,6 +68,7 @@ function createApp(deps) {
     lang = process.env.APP_LANG || 'js',
     maxBodyBytes = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10),
     apiKey = process.env.API_KEY || '',
+    apiKeyNext = process.env.API_KEY_NEXT || '',
     jwtSecret = process.env.JWT_SECRET || '',
     cookieSecure = (process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false',
     accessLog,
@@ -91,12 +92,16 @@ function createApp(deps) {
   });
 
   // ----- API-key gate (every /api/<lang>/* route) -----
-  if (apiKey) {
+  // During rotation, apiKeyNext is also accepted alongside apiKey.
+  if (apiKey || apiKeyNext) {
     app.use((req, res, next) => {
       if (!req.path.startsWith(`/api/${lang}`)) return next();
       const presented = req.header('x-api-key');
       if (!presented) return jsonError(res, 401, 'missing api key');
-      if (presented !== apiKey) return jsonError(res, 401, 'invalid api key');
+      const ok =
+        (apiKey && presented === apiKey) ||
+        (apiKeyNext && presented === apiKeyNext);
+      if (!ok) return jsonError(res, 401, 'invalid api key');
       next();
     });
   }

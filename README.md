@@ -131,6 +131,36 @@ in their roles array, otherwise 403 `{"error":"forbidden"}`.
 The `users` table is populated by the migration tool's `seed-admin` command;
 docker-compose seeds a default admin (`admin@local` / `supersecret`).
 
+#### Rotating the API key
+
+`api_key` and `api_key_next` are both stored in Secrets Manager and injected
+as `API_KEY` and `API_KEY_NEXT`. The auth middleware (in every language)
+accepts an `X-API-Key` that matches **either** value, so rotation can be
+zero-downtime:
+
+```bash
+# 1. Mint a new key and stage it alongside the current one.
+openssl rand -hex 32   # → e.g. 9f3a...
+# In terraform.tfvars:
+#   api_key      = "<current>"
+#   api_key_next = "9f3a..."
+cd terraform/environments/prod && terraform apply
+
+# 2. ECS rolls all four services (~1–2 min). Both keys are now valid.
+#    Update every caller to send the new key.
+
+# 3. Once no clients use the old key, swap and clear:
+#   api_key      = "9f3a..."
+#   api_key_next = ""
+cd terraform/environments/prod && terraform apply
+
+# 4. Wait for the roll. Only the new key is accepted now.
+```
+
+The `check_api_key_dual` pure helper in each language is unit-tested for
+this contract: primary-match, secondary-match, neither-matches, only-secondary,
+both-empty-disabled.
+
 ## Getting started
 
 There are two supported ways to bring the stack up locally. The Docker path
@@ -263,13 +293,13 @@ docker compose start redis            # or: sudo service redis-server start
 ## Running the test suite locally
 
 ```bash
-# JavaScript    (Jest + supertest)        70 tests
+# JavaScript    (Jest + supertest)        73 tests
 cd apps/js     && npm install && npm test
-# Python        (PyTest + httpx)          67 tests
+# Python        (PyTest + httpx)          70 tests
 cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
-# C             (Unity)                   39 tests
+# C             (Unity)                   44 tests
 cd apps/c      && make test
-# C++           (GoogleTest)              42 tests
+# C++           (GoogleTest)              47 tests
 cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
 ```
 

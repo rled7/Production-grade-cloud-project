@@ -35,6 +35,7 @@ app::Config load_config_from_env() {
     c.redis_timeout_ms = app::env_int("REDIS_TIMEOUT_MS", 200);
     c.max_body_bytes = static_cast<std::size_t>(app::env_int("MAX_BODY_BYTES", 1048576));
     c.api_key = app::env_str("API_KEY", "");
+    c.api_key_next = app::env_str("API_KEY_NEXT", "");
     return c;
 }
 
@@ -101,7 +102,9 @@ int main() {
     deps.cache_ttl_seconds = cfg.cache_ttl_seconds;
     deps.max_body_bytes = cfg.max_body_bytes;
     deps.api_key = cfg.api_key;
+    deps.api_key_next = cfg.api_key_next;
     deps.jwt_secret = jwt_secret;
+    if (!deps.api_key_next.empty()) std::cerr << "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n";
     deps.cookie_secure = cookie_secure;
 
     crow::SimpleApp crow_app;
@@ -121,7 +124,8 @@ int main() {
     };
 
     auto api_key_check = [&deps](const crow::request& req) -> std::optional<crow::response> {
-        auto auth = app::check_api_key(req.get_header_value("X-API-Key"), deps.api_key);
+        auto auth = app::check_api_key_dual(req.get_header_value("X-API-Key"),
+                                            deps.api_key, deps.api_key_next);
         if (auth == app::AuthStatus::Missing || auth == app::AuthStatus::Invalid) {
             return auth_response(auth);
         }

@@ -115,6 +115,7 @@ def make_config(
     lang: str = "python",
     max_body: int = 1024,
     api_key: str = "",
+    api_key_next: str = "",
     jwt_secret: str = "",
 ) -> Config:
     return Config(
@@ -132,6 +133,7 @@ def make_config(
         redis_tls=False,
         max_body_bytes=max_body,
         api_key=api_key,
+        api_key_next=api_key_next,
         jwt_secret=jwt_secret,
         cookie_secure=False,
         access_log_path="./access.log",
@@ -700,3 +702,30 @@ def test_listing_serializes_created_at_as_iso_string(fake_db, fake_cache):
         assert r.status_code == 200
         item = r.json()["items"][0]
         assert item["created_at"].startswith("2024-05-01T12:30:00")
+
+
+# ---------- API-key rotation ----------
+
+def test_api_key_rotation_both_accepted(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache,
+                     config=make_config(api_key="old", api_key_next="new"))
+    with TestClient(app) as c:
+        assert c.get("/api/python/data", headers={"X-API-Key": "old"}).status_code == 200
+        assert c.get("/api/python/data", headers={"X-API-Key": "new"}).status_code == 200
+        assert c.get("/api/python/data", headers={"X-API-Key": "nope"}).status_code == 401
+
+
+def test_api_key_rotation_after_swap_only_new(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache,
+                     config=make_config(api_key="new", api_key_next=""))
+    with TestClient(app) as c:
+        assert c.get("/api/python/data", headers={"X-API-Key": "new"}).status_code == 200
+        assert c.get("/api/python/data", headers={"X-API-Key": "old"}).status_code == 401
+
+
+def test_api_key_only_next_set_still_enforces(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache,
+                     config=make_config(api_key="", api_key_next="new"))
+    with TestClient(app) as c:
+        assert c.get("/api/python/data", headers={"X-API-Key": "new"}).status_code == 200
+        assert c.get("/api/python/data").status_code == 401

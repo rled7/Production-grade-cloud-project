@@ -9,6 +9,7 @@ const PORT             = parseInt(process.env.PORT || '8080', 10);
 const LANG             = process.env.APP_LANG || 'js';
 const MAX_BODY_BYTES   = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10);
 const API_KEY          = process.env.API_KEY || '';
+const API_KEY_NEXT     = process.env.API_KEY_NEXT || '';
 const JWT_SECRET       = process.env.JWT_SECRET || '';
 const COOKIE_SECURE    = (process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false';
 const ACCESS_LOG_PATH  = process.env.ACCESS_LOG_PATH || './access.log';
@@ -30,11 +31,13 @@ async function main() {
     backups: ACCESS_LOG_BACKUPS,
   });
 
+  if (API_KEY_NEXT) console.log('[server] API_KEY_NEXT is set — rotation in progress (both keys accepted).');
   const app = createApp({
     db, cache,
     lang: LANG,
     maxBodyBytes: MAX_BODY_BYTES,
     apiKey: API_KEY,
+    apiKeyNext: API_KEY_NEXT,
     jwtSecret: JWT_SECRET,
     cookieSecure: COOKIE_SECURE,
     accessLog,

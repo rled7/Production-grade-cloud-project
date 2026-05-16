@@ -3,6 +3,35 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] - 2026-05-16
+
+### Added — Graceful API-key rotation + repo housekeeping
+- New `api_key_next` Terraform variable, stored in the existing app-secrets
+  Secrets Manager entry, injected into every task as `API_KEY_NEXT`. Empty
+  means no rotation in flight.
+- All four apps accept either `API_KEY` or `API_KEY_NEXT` on the `X-API-Key`
+  header when both are configured:
+  - JS: `createApp({ apiKey, apiKeyNext })` with OR-check in the middleware.
+  - Python: `Config.api_key_next` + dual-check inside the `_api_key_auth`
+    middleware.
+  - C: new `check_api_key_dual` pure helper + `app_ctx_t.api_key_next` +
+    dispatch uses dual variant.
+  - C++: new `check_api_key_dual` + `AppDeps.api_key_next` + dual variant
+    in the Crow `api_key_check` lambda.
+- 16 new unit/integration tests (4 per language) covering primary-match,
+  secondary-match, neither-matches, only-secondary-set, and disabled.
+  Totals: **73 / 70 / 44 / 47 = 234** (was 218; +16).
+- README gained a "Rotating the API key" section with the four-step
+  procedure.
+
+### Added — Repo housekeeping
+- `.github/CODEOWNERS` with default + per-area ownership placeholders.
+- `.github/pull_request_template.md` (what/how-tested/risk/checklist).
+- `.editorconfig` (2-space default; 4-space for python/c/c++; tab for Makefiles).
+- `SECURITY.md` — disclosure process, in-scope/out-of-scope, hardening notes.
+- `.github/dependabot.yml` — weekly bumps for Docker base images, GitHub
+  Actions, npm + pip lockfiles, and the AWS Terraform provider pin.
+
 ## [1.4.0] - 2026-05-16
 
 ### Added — Migrations in CI, OIDC docs, admin credentials parameterized

@@ -292,3 +292,28 @@ TEST(ParseUserPayload, MissingClaimsGiveDefaults) {
     EXPECT_TRUE(u.email.empty());
     EXPECT_TRUE(u.roles_json.empty());
 }
+
+// ---------- check_api_key_dual (rotation) ----------
+
+TEST(CheckApiKeyDual, BothEmptyDisabled) {
+    EXPECT_EQ(check_api_key_dual("", "", ""), AuthStatus::Disabled);
+    EXPECT_EQ(check_api_key_dual("x", "", ""), AuthStatus::Disabled);
+}
+
+TEST(CheckApiKeyDual, PrimaryMatch) {
+    EXPECT_EQ(check_api_key_dual("old", "old", "new"), AuthStatus::Ok);
+}
+
+TEST(CheckApiKeyDual, SecondaryMatch) {
+    EXPECT_EQ(check_api_key_dual("new", "old", "new"), AuthStatus::Ok);
+}
+
+TEST(CheckApiKeyDual, NeitherMatches) {
+    EXPECT_EQ(check_api_key_dual("nope", "old", "new"), AuthStatus::Invalid);
+}
+
+TEST(CheckApiKeyDual, OnlySecondarySet) {
+    EXPECT_EQ(check_api_key_dual("new", "", "new"), AuthStatus::Ok);
+    EXPECT_EQ(check_api_key_dual("old", "", "new"), AuthStatus::Invalid);
+    EXPECT_EQ(check_api_key_dual("",    "", "new"), AuthStatus::Missing);
+}

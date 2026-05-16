@@ -19,7 +19,8 @@ struct Config {
     int cache_ttl_seconds = 30;
     int redis_timeout_ms = 200;
     std::size_t max_body_bytes = 1048576;
-    std::string api_key = "";  // empty => auth disabled
+    std::string api_key = "";       // empty => auth disabled
+    std::string api_key_next = "";  // empty => no second key (rotation off)
 
     std::string api_prefix() const { return "/api/" + app_lang; }
     std::string dsn() const {

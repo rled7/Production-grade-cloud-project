@@ -88,6 +88,13 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "api_key_next" {
+  description = "Optional second API key accepted in parallel with api_key. Set during rotation; clear once all clients have migrated."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "jwt_secret" {
   description = "HMAC-SHA256 signing secret for the session JWT cookie. Stored in Secrets Manager. Keep in terraform.tfvars (gitignored). Generate: openssl rand -hex 64."
   type        = string

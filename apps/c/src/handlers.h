@@ -19,6 +19,7 @@ typedef struct {
     int         cache_ttl_seconds;
     size_t      max_body_bytes;
     const char *api_key;         /* NULL/"" => API-key gate disabled */
+    const char *api_key_next;    /* NULL/"" => no second key accepted (rotation off) */
     const char *jwt_secret;      /* NULL/"" => JWT verification disabled */
     bool        cookie_secure;   /* true: set Secure attribute on cookies */
     struct access_log *access_log;
@@ -37,6 +38,12 @@ typedef enum {
  * `expected` NULL/empty disables auth and returns AUTH_DISABLED. */
 auth_status_t check_api_key(const char *presented, size_t presented_len,
                             const char *expected);
+
+/* Same, but accepts EITHER `expected` or `expected_next` (rotation overlap).
+ * AUTH_DISABLED only when BOTH are NULL/empty. */
+auth_status_t check_api_key_dual(const char *presented, size_t presented_len,
+                                 const char *expected,
+                                 const char *expected_next);
 
 /* ---------- Pure helpers (unit-testable, no I/O) ---------- */
 

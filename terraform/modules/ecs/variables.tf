@@ -69,6 +69,13 @@ variable "api_key" {
   sensitive   = true
 }
 
+variable "api_key_next" {
+  description = "Optional second API key accepted in parallel with api_key. Used for graceful rotation: set the new key here, redeploy, migrate clients, then swap api_key=api_key_next and clear this var. Empty means no rotation in flight."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "jwt_secret" {
   description = "HMAC-SHA256 signing secret for the session JWT cookie. Stored in Secrets Manager and injected into each task. Empty disables JWT verification."
   type        = string

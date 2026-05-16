@@ -46,6 +46,18 @@ AuthStatus check_api_key(const std::string& presented, const std::string& expect
     return diff == 0 ? AuthStatus::Ok : AuthStatus::Invalid;
 }
 
+AuthStatus check_api_key_dual(const std::string& presented,
+                              const std::string& expected,
+                              const std::string& expected_next) {
+    const bool primary_off   = expected.empty();
+    const bool secondary_off = expected_next.empty();
+    if (primary_off && secondary_off) return AuthStatus::Disabled;
+    if (presented.empty()) return AuthStatus::Missing;
+    if (!primary_off   && check_api_key(presented, expected)      == AuthStatus::Ok) return AuthStatus::Ok;
+    if (!secondary_off && check_api_key(presented, expected_next) == AuthStatus::Ok) return AuthStatus::Ok;
+    return AuthStatus::Invalid;
+}
+
 std::string json_escape(std::string_view in) {
     std::string out;
     out.reserve(in.size() + 8);

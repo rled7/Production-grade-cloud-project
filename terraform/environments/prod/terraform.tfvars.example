@@ -18,6 +18,11 @@ db_password = "CHANGE-ME-USE-A-STRONG-PASSWORD"
 # Generate with: openssl rand -hex 32
 api_key = "CHANGE-ME-USE-A-STRONG-API-KEY"
 
+# Optional second API key accepted in parallel during a rotation.
+# Leave empty when not rotating; see README "Rotating the API key" for the
+# four-step graceful rotation procedure.
+api_key_next = ""
+
 # JWT signing secret (HMAC-SHA256) — used to sign session cookies.
 # Generate with: openssl rand -hex 64
 jwt_secret = "CHANGE-ME-USE-A-LONG-RANDOM-SECRET-NO-LESS-THAN-32-BYTES"

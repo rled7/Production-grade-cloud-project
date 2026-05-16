@@ -97,6 +97,24 @@ auth_status_t check_api_key(const char *presented, size_t presented_len,
     return diff == 0 ? AUTH_OK : AUTH_INVALID;
 }
 
+auth_status_t check_api_key_dual(const char *presented, size_t presented_len,
+                                 const char *expected,
+                                 const char *expected_next) {
+    bool primary_off   = (expected      == NULL || expected[0]      == '\0');
+    bool secondary_off = (expected_next == NULL || expected_next[0] == '\0');
+    if (primary_off && secondary_off) return AUTH_DISABLED;
+    if (presented == NULL || presented_len == 0) return AUTH_MISSING;
+    if (!primary_off &&
+        check_api_key(presented, presented_len, expected) == AUTH_OK) {
+        return AUTH_OK;
+    }
+    if (!secondary_off &&
+        check_api_key(presented, presented_len, expected_next) == AUTH_OK) {
+        return AUTH_OK;
+    }
+    return AUTH_INVALID;
+}
+
 /* ---------- Strbuf (dynamic buffer) ---------- */
 
 typedef struct {
@@ -635,12 +653,14 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
         return;
     }
 
-    /* API-key auth on every non-/health route. */
+    /* API-key auth on every non-/health route. Accepts api_key OR
+     * api_key_next during a rotation overlap. */
     {
         struct mg_str *h = mg_http_get_header(hm, "X-API-Key");
         const char *pres = h ? h->buf : NULL;
         size_t pres_len = h ? h->len : 0;
-        switch (check_api_key(pres, pres_len, app->api_key)) {
+        switch (check_api_key_dual(pres, pres_len,
+                                   app->api_key, app->api_key_next)) {
             case AUTH_OK:
             case AUTH_DISABLED:
                 break;

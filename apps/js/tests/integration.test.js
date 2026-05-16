@@ -114,8 +114,9 @@ function buildApp(overrides = {}) {
     cache,
     lang: overrides.lang || 'js',
     maxBodyBytes: overrides.maxBodyBytes || 1024, // small for size tests
-    apiKey:    overrides.apiKey    !== undefined ? overrides.apiKey    : '',
-    jwtSecret: overrides.jwtSecret !== undefined ? overrides.jwtSecret : '',
+    apiKey:     overrides.apiKey     !== undefined ? overrides.apiKey     : '',
+    apiKeyNext: overrides.apiKeyNext !== undefined ? overrides.apiKeyNext : '',
+    jwtSecret:  overrides.jwtSecret  !== undefined ? overrides.jwtSecret  : '',
     cookieSecure: overrides.cookieSecure !== undefined ? overrides.cookieSecure : false,
   });
   return { app, db, cache };
@@ -715,5 +716,29 @@ describe('routing edge cases', () => {
     // express by default does not match trailing slash — accept 404 or 200/401
     const r = await request(app).get('/api/js/data/');
     expect(r.status).toBeLessThan(500);
+  });
+});
+
+describe('API-key rotation (api_key + api_key_next)', () => {
+  const OLD = 'old-key';
+  const NEW = 'new-key';
+
+  test('both keys are accepted while both are configured', async () => {
+    const { app } = buildApp({ apiKey: OLD, apiKeyNext: NEW });
+    expect((await request(app).get('/api/js/data').set('X-API-Key', OLD)).status).toBe(200);
+    expect((await request(app).get('/api/js/data').set('X-API-Key', NEW)).status).toBe(200);
+    expect((await request(app).get('/api/js/data').set('X-API-Key', 'nope')).status).toBe(401);
+  });
+
+  test('after swap, only the new key is accepted', async () => {
+    const { app } = buildApp({ apiKey: NEW, apiKeyNext: '' });
+    expect((await request(app).get('/api/js/data').set('X-API-Key', NEW)).status).toBe(200);
+    expect((await request(app).get('/api/js/data').set('X-API-Key', OLD)).status).toBe(401);
+  });
+
+  test('empty apiKey but set apiKeyNext still enforces auth', async () => {
+    const { app } = buildApp({ apiKey: '', apiKeyNext: NEW });
+    expect((await request(app).get('/api/js/data').set('X-API-Key', NEW)).status).toBe(200);
+    expect((await request(app).get('/api/js/data')).status).toBe(401);
   });
 });

@@ -45,6 +45,7 @@ class Config:
     redis_tls: bool
     max_body_bytes: int
     api_key: str  # empty string => API-key gate disabled
+    api_key_next: str  # optional second key accepted during rotation
     jwt_secret: str  # empty string => JWT verification disabled
     cookie_secure: bool
     access_log_path: str
@@ -83,6 +84,7 @@ def load_config() -> Config:
         redis_tls=_env_bool("REDIS_TLS", False),
         max_body_bytes=_env_int("MAX_BODY_BYTES", 1048576),
         api_key=_env_str("API_KEY", ""),
+        api_key_next=_env_str("API_KEY_NEXT", ""),
         jwt_secret=_env_str("JWT_SECRET", ""),
         cookie_secure=_env_bool("COOKIE_SECURE", True),
         access_log_path=_env_str("ACCESS_LOG_PATH", "./access.log"),

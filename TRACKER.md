@@ -111,3 +111,10 @@ Timestamps are UTC, recorded at phase completion.
 - [x] CI `migrate` job between build-and-push and deploy - 2026-05-16 02:00 UTC
 - [x] README: GitHub Actions setup + OIDC trust policy + bootstrap recipe - 2026-05-16 02:00 UTC
 - [x] docker-compose admin user parameterized (ADMIN_EMAIL/ADMIN_PASSWORD) - 2026-05-16 02:00 UTC
+
+## Post-1.0: API-key rotation + repo housekeeping (1.5.0)
+- [x] terraform: api_key_next variable + secrets injection - 2026-05-16 03:00 UTC
+- [x] JS / Python / C / C++ accept either api_key or api_key_next - 2026-05-16 03:00 UTC
+- [x] 16 new dual-key tests (4 per language); totals 73/70/44/47 = 234 - 2026-05-16 03:00 UTC
+- [x] README "Rotating the API key" procedure - 2026-05-16 03:00 UTC
+- [x] CODEOWNERS / PR template / .editorconfig / SECURITY.md / Dependabot - 2026-05-16 03:00 UTC

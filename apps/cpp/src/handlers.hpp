@@ -42,6 +42,7 @@ struct AppDeps {
     int cache_ttl_seconds = 30;
     std::size_t max_body_bytes = 1048576;
     std::string api_key;          // empty => API-key gate disabled
+    std::string api_key_next;     // empty => no second key (rotation off)
     std::string jwt_secret;       // empty => JWT verification disabled
     bool cookie_secure = true;
 };
@@ -59,6 +60,12 @@ enum class AuthStatus { Ok, Missing, Invalid, Disabled };
 
 // Pure auth check (unit-testable). presented may be empty.
 AuthStatus check_api_key(const std::string& presented, const std::string& expected);
+
+// Dual-key variant for graceful rotation. Returns Ok if presented matches
+// either expected or expected_next. Disabled only when both are empty.
+AuthStatus check_api_key_dual(const std::string& presented,
+                              const std::string& expected,
+                              const std::string& expected_next);
 
 // Each returns (status_code, body_json). All callers wrap as crow::response.
 struct HandlerResult {

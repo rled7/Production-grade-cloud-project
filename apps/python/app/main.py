@@ -51,11 +51,13 @@ def create_app(
     cache: Optional[Any] = None,
     config: Optional[Config] = None,
     api_key: Optional[str] = None,
+    api_key_next: Optional[str] = None,
     jwt_secret: Optional[str] = None,
     enable_access_log: bool = False,
 ) -> FastAPI:
     cfg = config or load_config()
     effective_api_key = api_key if api_key is not None else cfg.api_key
+    effective_api_key_next = api_key_next if api_key_next is not None else cfg.api_key_next
     effective_jwt_secret = jwt_secret if jwt_secret is not None else cfg.jwt_secret
     cookie_secure = cfg.cookie_secure
 
@@ -90,7 +92,8 @@ def create_app(
     max_body = cfg.max_body_bytes
 
     # --------- API-key gate middleware ---------
-    if effective_api_key:
+    # During rotation, effective_api_key_next is also accepted.
+    if effective_api_key or effective_api_key_next:
 
         @app.middleware("http")
         async def _api_key_auth(request: Request, call_next):
@@ -99,7 +102,11 @@ def create_app(
             presented = request.headers.get("x-api-key")
             if not presented:
                 return _json(401, {"error": "missing api key"})
-            if presented != effective_api_key:
+            ok = (
+                (effective_api_key and presented == effective_api_key)
+                or (effective_api_key_next and presented == effective_api_key_next)
+            )
+            if not ok:
                 return _json(401, {"error": "invalid api key"})
             return await call_next(request)
 
