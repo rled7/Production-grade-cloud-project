@@ -15,6 +15,7 @@ struct Config {
     std::string db_password = "";
     std::string redis_host = "localhost";
     int redis_port = 6379;
+    bool redis_tls = false;
     int cache_ttl_seconds = 30;
     int redis_timeout_ms = 200;
     std::size_t max_body_bytes = 1048576;

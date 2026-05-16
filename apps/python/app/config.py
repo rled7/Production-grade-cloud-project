@@ -42,6 +42,7 @@ class Config:
     redis_port: int
     cache_ttl_seconds: int
     redis_timeout_ms: int
+    redis_tls: bool
     max_body_bytes: int
     api_key: str  # empty string => API-key gate disabled
     jwt_secret: str  # empty string => JWT verification disabled
@@ -79,6 +80,7 @@ def load_config() -> Config:
         redis_port=_env_int("REDIS_PORT", 6379),
         cache_ttl_seconds=_env_int("CACHE_TTL_SECONDS", 30),
         redis_timeout_ms=_env_int("REDIS_TIMEOUT_MS", 200),
+        redis_tls=_env_bool("REDIS_TLS", False),
         max_body_bytes=_env_int("MAX_BODY_BYTES", 1048576),
         api_key=_env_str("API_KEY", ""),
         jwt_secret=_env_str("JWT_SECRET", ""),

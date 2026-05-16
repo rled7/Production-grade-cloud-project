@@ -1,9 +1,11 @@
 #include "cache.hpp"
 
 #include <hiredis/hiredis.h>
+#include <hiredis/hiredis_ssl.h>
 
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <utility>
 
 namespace app {
@@ -14,18 +16,39 @@ void log_warn(const std::string& msg) {
     std::cerr << "[cache] WARN " << msg << std::endl;
 }
 
+std::once_flag g_ssl_init_once;
+void init_openssl_once() {
+    std::call_once(g_ssl_init_once, []() { redisInitOpenSSL(); });
+}
+
 }  // namespace
 
-Cache::Cache(std::string host, int port, int timeout_ms, int ttl_seconds)
+Cache::Cache(std::string host, int port, int timeout_ms, int ttl_seconds,
+             bool tls)
     : host_(std::move(host)),
       port_(port),
       timeout_ms_(timeout_ms),
-      ttl_seconds_(ttl_seconds) {}
+      ttl_seconds_(ttl_seconds),
+      tls_(tls) {
+    if (tls_) {
+        init_openssl_once();
+        redisSSLContextError err = REDIS_SSL_CTX_NONE;
+        ssl_ctx_ = redisCreateSSLContext(nullptr, nullptr, nullptr, nullptr,
+                                         host_.c_str(), &err);
+        if (!ssl_ctx_) {
+            log_warn("redisCreateSSLContext failed");
+        }
+    }
+}
 
 Cache::~Cache() {
     if (ctx_) {
         redisFree(ctx_);
         ctx_ = nullptr;
+    }
+    if (ssl_ctx_) {
+        redisFreeSSLContext(ssl_ctx_);
+        ssl_ctx_ = nullptr;
     }
 }
 
@@ -60,6 +83,13 @@ redisContext* Cache::ensure_ctx() {
         log_warn("redisSetTimeout failed");
         redisFree(c);
         return nullptr;
+    }
+    if (tls_ && ssl_ctx_) {
+        if (redisInitiateSSLWithContext(c, ssl_ctx_) != REDIS_OK) {
+            log_warn(std::string("redis TLS handshake failed: ") + c->errstr);
+            redisFree(c);
+            return nullptr;
+        }
     }
     ctx_ = c;
     return ctx_;

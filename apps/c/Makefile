@@ -1,7 +1,7 @@
 CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra -Wno-unused-parameter -std=c11 -D_GNU_SOURCE
 CPPFLAGS ?= -I/usr/include/postgresql
-LDLIBS   = -lpq -lhiredis -lcrypto -lcrypt
+LDLIBS   = -lpq -lhiredis -lhiredis_ssl -lcrypto -lssl -lcrypt
 
 SRC_DIR  := src
 TEST_DIR := tests
@@ -26,7 +26,7 @@ server: $(APP_OBJS)
 test_handlers: $(TEST_SRCS) $(SRC_DIR)/vendor/mongoose.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -I$(SRC_DIR) -o $@ \
 	    $(TEST_SRCS) $(SRC_DIR)/vendor/mongoose.c \
-	    -lhiredis -lpq -lcrypto -lcrypt -lpthread
+	    -lhiredis -lhiredis_ssl -lpq -lcrypto -lssl -lcrypt -lpthread
 
 test: test_handlers
 	./test_handlers

@@ -68,6 +68,7 @@ def create_app(
             port=cfg.redis_port,
             timeout_ms=cfg.redis_timeout_ms,
             ttl_seconds=cfg.cache_ttl_seconds,
+            tls=cfg.redis_tls,
         )
     )
 

@@ -35,6 +35,12 @@ function createCache(options = {}) {
     options.timeoutMs || process.env.REDIS_TIMEOUT_MS || '200',
     10
   );
+  // TLS for ElastiCache transit encryption. ElastiCache uses an AWS-managed
+  // certificate signed by a public CA, so default verification is fine.
+  const tls =
+    options.tls !== undefined
+      ? !!options.tls
+      : (process.env.REDIS_TLS || 'false').toLowerCase() === 'true';
 
   let client = null;
   let connecting = null;
@@ -53,6 +59,7 @@ function createCache(options = {}) {
         socket: {
           host,
           port,
+          tls,
           connectTimeout: timeoutMs,
           reconnectStrategy: () => false, // disable auto-retry; we manage it
         },
@@ -146,7 +153,7 @@ function createCache(options = {}) {
     del,
     close,
     // exposed for tests / introspection
-    _config: { host, port, ttl, timeoutMs },
+    _config: { host, port, ttl, timeoutMs, tls },
   };
 }
 

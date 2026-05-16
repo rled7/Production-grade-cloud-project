@@ -263,13 +263,13 @@ docker compose start redis            # or: sudo service redis-server start
 ## Running the test suite locally
 
 ```bash
-# JavaScript    (Jest + supertest)        60 tests
+# JavaScript    (Jest + supertest)        70 tests
 cd apps/js     && npm install && npm test
-# Python        (PyTest + httpx)          57 tests
+# Python        (PyTest + httpx)          67 tests
 cd apps/python && pip install -r requirements.txt -r requirements-dev.txt && pytest -q
-# C             (Unity)                   31 tests
+# C             (Unity)                   39 tests
 cd apps/c      && make test
-# C++           (GoogleTest)              32 tests
+# C++           (GoogleTest)              42 tests
 cd apps/cpp    && cmake -S . -B build && cmake --build build --target unit_tests -j && ./build/unit_tests
 ```
 
@@ -307,12 +307,30 @@ aws ecs update-service --cluster ml-ecs-benchmark --service ml-ecs-benchmark-js 
 
 ## Running the benchmark and chaos suite
 
-After a deployment is live:
+**Two modes**: production (single ALB endpoint) or local (per-language docker-compose ports).
 
 ```bash
-BASE_URL=https://api.example.com API_KEY=<the deployed key> ./benchmark/run_tests.sh
-BASE_URL=https://api.example.com API_KEY=<the deployed key> ./benchmark/chaos_test.sh
+# --- Cross-language comparison ---
+# Production (one ALB):
+BASE_URL=https://api.example.com API_KEY=<key> ./benchmark/run_compare.sh
+# Local (docker-compose up first):
+LOCAL=1 API_KEY=local-dev-key ./benchmark/run_compare.sh
+
+# --- One language at a time ---
+LOCAL=1 API_KEY=local-dev-key ./benchmark/run_js.sh
+LOCAL=1 API_KEY=local-dev-key ./benchmark/run_python.sh
+LOCAL=1 API_KEY=local-dev-key ./benchmark/run_c.sh
+LOCAL=1 API_KEY=local-dev-key ./benchmark/run_cpp.sh
+
+# --- Chaos / abuse probes ---
+LOCAL=1 API_KEY=local-dev-key ./benchmark/chaos_test.sh
 ```
+
+Every runner authenticates once via `/api/<lang>/auth/login` (with `EMAIL` /
+`PASSWORD`, defaults `admin@local` / `supersecret`), captures the session
+cookie, and uses it on every subsequent request. The cross-language script
+emits `./results/summary-<timestamp>.csv` with throughput and p95/p99
+latency per language; `run_compare.sh` additionally prints a ranked table.
 
 `run_tests.sh` produces `results/summary-<timestamp>.csv` with per-language
 throughput and p95/p99 latency. `chaos_test.sh` verifies edge-case handling

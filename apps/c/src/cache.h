@@ -29,8 +29,10 @@ int build_item_key(char *buf, size_t buflen, long id);
 int build_all_key(char *buf, size_t buflen);
 
 /* Create/connect a cache context. Returns NULL on failure (caller should
- * continue without cache). host may be NULL/empty to disable. */
-cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms);
+ * continue without cache). host may be NULL/empty to disable.
+ * When tls is true the connection is wrapped in TLS via hiredis_ssl. */
+cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms,
+                           bool tls);
 
 /* Free a cache context. */
 void cache_free(cache_ctx_t *ctx);

@@ -269,6 +269,65 @@ static void test_roles_contains_any_empty(void) {
     TEST_ASSERT_FALSE(roles_contains_any("[]", 2, wanted, 1));
 }
 
+/* ---------- Edge cases ---------- */
+
+static void test_parse_positive_long_max(void) {
+    long v = 0;
+    TEST_ASSERT_TRUE(parse_positive_long("9223372036854775807", 19, &v));
+    TEST_ASSERT_EQUAL_INT64(9223372036854775807LL, v);
+    TEST_ASSERT_FALSE(parse_positive_long("99999999999999999999", 20, &v));
+    TEST_ASSERT_FALSE(parse_positive_long("9223372036854775808", 19, &v));
+}
+
+static void test_json_escape_high_bytes_passthrough(void) {
+    char buf[16];
+    const unsigned char utf8[] = {0xc3, 0xa9, 0xc3, 0xb1, 0}; // é ñ
+    int n = json_escape((const char *) utf8, 4, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT(4, n);
+    TEST_ASSERT_EQUAL_INT(0, memcmp(buf, utf8, 4));
+}
+
+static void test_json_escape_embedded_null(void) {
+    char buf[16];
+    char in[3] = { 'a', 0, 'b' };
+    int n = json_escape(in, 3, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT(8, n);
+    TEST_ASSERT_EQUAL_STRING("a\\u0000b", buf);
+}
+
+static void test_b64url_decode_rejects_invalid(void) {
+    unsigned char out[16];
+    TEST_ASSERT_EQUAL_INT(-1, b64url_decode("aaa!", 4, out, sizeof(out)));
+    /* / and + are standard b64 chars but NOT url-safe; must be rejected. */
+    TEST_ASSERT_EQUAL_INT(-1, b64url_decode("a/b+", 4, out, sizeof(out)));
+    TEST_ASSERT_EQUAL_INT(-1, b64url_decode("a b", 3, out, sizeof(out)));
+}
+
+static void test_cookie_get_session_truncated_buffer(void) {
+    const char *hdr = "session=very-long-token-value";
+    char out[8];
+    TEST_ASSERT_EQUAL_INT(-1, cookie_get_session(hdr, strlen(hdr), out, sizeof(out)));
+}
+
+static void test_jwt_verify_malformed_tokens(void) {
+    char back[256];
+    const char *secret = "x";
+    TEST_ASSERT_NOT_EQUAL(0, jwt_verify_hs256("onlyonedot", 10, secret, 1, 0, back, sizeof(back)));
+    TEST_ASSERT_NOT_EQUAL(0, jwt_verify_hs256("a.b.c.d", 7, secret, 1, 0, back, sizeof(back)));
+    TEST_ASSERT_NOT_EQUAL(0, jwt_verify_hs256("", 0, secret, 1, 0, back, sizeof(back)));
+}
+
+static void test_roles_contains_any_malformed(void) {
+    const char *wanted[] = { "writer" };
+    TEST_ASSERT_FALSE(roles_contains_any("not json", 8, wanted, 1));
+    TEST_ASSERT_FALSE(roles_contains_any("[\"unterminated", 14, wanted, 1));
+}
+
+static void test_check_api_key_empty_presented_with_expected_set(void) {
+    TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key(NULL, 0, "x"));
+    TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key("", 0, "x"));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_positive_long_accepts_simple);
@@ -302,5 +361,13 @@ int main(void) {
     RUN_TEST(test_roles_contains_any_hit);
     RUN_TEST(test_roles_contains_any_miss);
     RUN_TEST(test_roles_contains_any_empty);
+    RUN_TEST(test_parse_positive_long_max);
+    RUN_TEST(test_json_escape_high_bytes_passthrough);
+    RUN_TEST(test_json_escape_embedded_null);
+    RUN_TEST(test_b64url_decode_rejects_invalid);
+    RUN_TEST(test_cookie_get_session_truncated_buffer);
+    RUN_TEST(test_jwt_verify_malformed_tokens);
+    RUN_TEST(test_roles_contains_any_malformed);
+    RUN_TEST(test_check_api_key_empty_presented_with_expected_set);
     return UNITY_END();
 }

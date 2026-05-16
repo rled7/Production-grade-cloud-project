@@ -129,6 +129,7 @@ def make_config(
         redis_port=6379,
         cache_ttl_seconds=30,
         redis_timeout_ms=200,
+        redis_tls=False,
         max_body_bytes=max_body,
         api_key=api_key,
         jwt_secret=jwt_secret,
@@ -604,3 +605,98 @@ def test_logout_clears_session_cookie():
         assert r.status_code == 204
         assert "session=" in r.headers["set-cookie"]
         assert "Max-Age=0" in r.headers["set-cookie"]
+
+
+# ---------- Edge cases ----------
+
+def test_unicode_content_roundtrips(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(max_body=4096))
+    with TestClient(app) as c:
+        value = "hello 🌍 — résumé naïve façade Ω"
+        r1 = c.post("/api/python/data", json={"content": value})
+        assert r1.status_code == 201
+        assert r1.json()["item"]["content"] == value
+        item_id = r1.json()["item"]["id"]
+        r2 = c.get(f"/api/python/data/{item_id}")
+        assert r2.status_code == 200
+        assert r2.json()["item"]["content"] == value
+
+
+def test_content_with_quotes_and_backslashes(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config())
+    with TestClient(app) as c:
+        value = 'with "quotes" and \\backslash and \nnewline'
+        r = c.post("/api/python/data", json={"content": value})
+        assert r.status_code == 201
+        assert r.json()["item"]["content"] == value
+
+
+def test_body_at_max_body_bytes_boundary(fake_db, fake_cache):
+    cap = 256
+    overhead = len('{"content":""}')
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(max_body=cap))
+    with TestClient(app) as c:
+        exact = '{"content":"' + "x" * (cap - overhead) + '"}'
+        assert len(exact) == cap
+        r = c.post("/api/python/data", content=exact, headers={"content-type": "application/json"})
+        assert r.status_code == 201
+        bigger = '{"content":"' + "x" * (cap - overhead + 1) + '"}'
+        r2 = c.post("/api/python/data", content=bigger, headers={"content-type": "application/json"})
+        assert r2.status_code == 413
+
+
+def test_delete_method_not_allowed_or_404(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config())
+    with TestClient(app) as c:
+        r = c.delete("/api/python/data")
+        assert 400 <= r.status_code < 500
+
+
+def test_unknown_language_prefix_returns_404(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config())
+    with TestClient(app) as c:
+        r = c.get("/api/rust/data")
+        assert r.status_code == 404
+
+
+def test_login_with_non_string_email_returns_400(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(jwt_secret="x"))
+    with TestClient(app) as c:
+        for bad in [{"email": 1, "password": "p"}, {"email": "a", "password": None}]:
+            r = c.post("/api/python/auth/login", json=bad)
+            assert r.status_code == 400
+
+
+def test_jwt_malformed_tokens_return_401():
+    app = auth_app([make_user()])
+    with TestClient(app) as c:
+        for bad in ["only.one", "a.b.c.d", "garbage", ".."]:
+            r = c.get("/api/python/auth/me", cookies={"session": bad})
+            assert r.status_code == 401
+
+
+def test_api_key_header_case_insensitive(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key="k"))
+    with TestClient(app) as c:
+        r = c.get("/api/python/data", headers={"x-api-key": "k"})
+        assert r.status_code != 401
+
+
+def test_health_with_extra_path_returns_404(fake_db, fake_cache):
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config())
+    with TestClient(app) as c:
+        r = c.get("/health/extra")
+        assert r.status_code == 404
+
+
+def test_listing_serializes_created_at_as_iso_string(fake_db, fake_cache):
+    fake_db.items.append(
+        DataItem(id=99, content="x", created_at=datetime(2024, 5, 1, 12, 30, 0, tzinfo=timezone.utc))
+    )
+    fake_db._next_id = 100
+    app = create_app(db=fake_db, cache=fake_cache, config=make_config())
+    with TestClient(app) as c:
+        r = c.get("/api/python/data")
+        assert r.status_code == 200
+        item = r.json()["items"][0]
+        assert item["created_at"].startswith("2024-05-01T12:30:00")

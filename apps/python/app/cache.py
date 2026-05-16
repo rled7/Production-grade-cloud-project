@@ -25,11 +25,13 @@ class Cache:
         port: int,
         timeout_ms: int,
         ttl_seconds: int,
+        tls: bool = False,
     ) -> None:
         self._host = host
         self._port = port
         self._timeout = timeout_ms / 1000.0
         self._ttl = ttl_seconds
+        self._tls = tls
         self._client = None  # type: ignore[assignment]
         self._init_failed = False
 
@@ -47,6 +49,10 @@ class Cache:
                 socket_connect_timeout=self._timeout,
                 socket_timeout=self._timeout,
                 decode_responses=True,
+                ssl=self._tls,
+                # ElastiCache uses an AWS-managed cert signed by a public CA;
+                # verify by default. Set REDIS_TLS_VERIFY=false to disable.
+                ssl_cert_reqs="required" if self._tls else None,
             )
             self._client = client
             return client

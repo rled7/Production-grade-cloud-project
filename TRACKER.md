@@ -92,3 +92,15 @@ Timestamps are UTC, recorded at phase completion.
 - [x] JWT_SECRET injected through Secrets Manager into every ECS task - 2026-05-16 00:00 UTC
 - [x] CI: terraform plan (prod) job for PR rehearsal - 2026-05-16 00:00 UTC
 - [x] README + CHANGELOG 1.2.0 + TRACKER updated - 2026-05-16 00:00 UTC
+
+## Post-1.0: Redis TLS, Edge cases, Per-language benchmarks (1.3.0)
+- [x] JS cache: socket.tls flag + env wiring - 2026-05-16 01:00 UTC
+- [x] Python cache: ssl=True + ssl_cert_reqs - 2026-05-16 01:00 UTC
+- [x] C cache: hiredis_ssl init + SSL context + handshake - 2026-05-16 01:00 UTC
+- [x] C++ cache: same via std::call_once + redisInitiateSSLWithContext - 2026-05-16 01:00 UTC
+- [x] Edge cases per language (unicode, boundary body, malformed JWT, b64url invalid chars, case-insensitive headers) - 2026-05-16 01:00 UTC
+- [x] benchmark/run_tests.sh supports LOCAL=1 + per-language URLs + auth login - 2026-05-16 01:00 UTC
+- [x] benchmark/run_{js,python,c,cpp}.sh per-language wrappers - 2026-05-16 01:00 UTC
+- [x] benchmark/run_compare.sh ranks all four by req/sec - 2026-05-16 01:00 UTC
+- [x] benchmark/chaos_test.sh updated for LOCAL=1 - 2026-05-16 01:00 UTC
+- [x] Test totals: 70 JS / 67 Py / 39 C / 42 C++ = 218 - 2026-05-16 01:00 UTC

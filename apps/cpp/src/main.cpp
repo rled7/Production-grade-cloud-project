@@ -27,6 +27,10 @@ app::Config load_config_from_env() {
     c.db_password = app::env_str("DB_PASSWORD", "");
     c.redis_host = app::env_str("REDIS_HOST", "localhost");
     c.redis_port = app::env_int("REDIS_PORT", 6379);
+    {
+        const std::string v = app::env_str("REDIS_TLS", "false");
+        c.redis_tls = (v == "true" || v == "1");
+    }
     c.cache_ttl_seconds = app::env_int("CACHE_TTL_SECONDS", 30);
     c.redis_timeout_ms = app::env_int("REDIS_TIMEOUT_MS", 200);
     c.max_body_bytes = static_cast<std::size_t>(app::env_int("MAX_BODY_BYTES", 1048576));
@@ -85,7 +89,8 @@ int main() {
         std::cerr << "[warn] could not ensure schema at startup: " << e.what() << "\n";
     }
     auto cache = std::make_unique<app::Cache>(cfg.redis_host, cfg.redis_port,
-                                              cfg.redis_timeout_ms, cfg.cache_ttl_seconds);
+                                              cfg.redis_timeout_ms, cfg.cache_ttl_seconds,
+                                              cfg.redis_tls);
     auto access_log = std::make_unique<app::AccessLog>(
         access_log_path, access_log_max_bytes, access_log_backups);
 

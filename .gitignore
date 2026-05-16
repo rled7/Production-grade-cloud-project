@@ -43,3 +43,5 @@ apps/cpp/build/
 .env
 .env.local
 *.local
+apps/*/access.log
+apps/*/access.log.*

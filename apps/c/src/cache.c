@@ -1,6 +1,8 @@
 #include "cache.h"
 
 #include <hiredis/hiredis.h>
+#include <hiredis/hiredis_ssl.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,11 +10,16 @@
 #include <sys/time.h>
 
 struct cache_ctx {
-    redisContext *rc;
+    redisContext     *rc;
+    redisSSLContext  *ssl_ctx;   /* NULL when TLS is disabled */
     char host[256];
-    int port;
-    int timeout_ms;
+    int  port;
+    int  timeout_ms;
+    bool tls;
 };
+
+static pthread_once_t s_ssl_init = PTHREAD_ONCE_INIT;
+static void init_openssl(void) { redisInitOpenSSL(); }
 
 bool should_use_cache(cache_status_t s) {
     return s == CACHE_OK;
@@ -69,11 +76,20 @@ static bool try_connect(cache_ctx_t *ctx) {
         ctx->rc = NULL;
         return false;
     }
+    if (ctx->tls && ctx->ssl_ctx) {
+        if (redisInitiateSSLWithContext(rc, ctx->ssl_ctx) != REDIS_OK) {
+            log_warn("redis TLS handshake failed: %s", rc->errstr);
+            redisFree(rc);
+            ctx->rc = NULL;
+            return false;
+        }
+    }
     ctx->rc = rc;
     return true;
 }
 
-cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms) {
+cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms,
+                           bool tls) {
     if (host == NULL || host[0] == '\0') {
         return NULL;
     }
@@ -82,6 +98,21 @@ cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms) {
     snprintf(ctx->host, sizeof(ctx->host), "%s", host);
     ctx->port = port;
     ctx->timeout_ms = timeout_ms > 0 ? timeout_ms : 200;
+    ctx->tls = tls;
+
+    if (tls) {
+        pthread_once(&s_ssl_init, init_openssl);
+        redisSSLContextError ssl_err = REDIS_SSL_CTX_NONE;
+        /* CA bundle: NULL => use system trust store (/etc/ssl/...). */
+        ctx->ssl_ctx = redisCreateSSLContext(NULL, NULL, NULL, NULL,
+                                             host, &ssl_err);
+        if (!ctx->ssl_ctx) {
+            log_warn("redis SSL context init failed: %d", (int) ssl_err);
+            /* fall through; try_connect will skip TLS attach since ssl_ctx==NULL,
+             * and the call will likely fail against a TLS-only server. */
+        }
+    }
+
     (void) try_connect(ctx);
     /* Return ctx even if connection failed; we'll retry on each call. */
     return ctx;
@@ -90,6 +121,7 @@ cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms) {
 void cache_free(cache_ctx_t *ctx) {
     if (!ctx) return;
     if (ctx->rc) redisFree(ctx->rc);
+    if (ctx->ssl_ctx) redisFreeSSLContext(ctx->ssl_ctx);
     free(ctx);
 }
 

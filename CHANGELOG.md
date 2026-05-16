@@ -3,6 +3,44 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] - 2026-05-16
+
+### Added — Redis TLS, edge-case suites, per-language benchmarks
+- All four apps now honor `REDIS_TLS=true` and connect to ElastiCache via TLS
+  (matches the Terraform default of `transit_encryption_enabled = true`):
+  - JS: `socket.tls=true` on `redis.createClient`.
+  - Python: `redis.Redis(ssl=True, ssl_cert_reqs="required")`.
+  - C: `hiredis_ssl` — `redisInitOpenSSL` (pthread_once) +
+    `redisCreateSSLContext` + `redisInitiateSSLWithContext`. Makefile links
+    `-lhiredis_ssl -lssl`.
+  - C++: same as C, exposed through `Cache(..., bool tls)` and
+    initialized via `std::call_once`. CMake links `hiredis_ssl OpenSSL::SSL`.
+- Comprehensive edge-case test sweep added per language:
+  - Unicode + multi-byte content roundtrips (POST → GET).
+  - Embedded `"`, `\`, control chars, and embedded NUL bytes (length-based
+    serialization in C/C++).
+  - Body exactly at `MAX_BODY_BYTES` boundary (accepted) and +1 (413).
+  - `parse_positive_long` at the `LLONG_MAX` boundary; overflow rejection.
+  - Method-not-allowed responses (`DELETE /api/<lang>/data`).
+  - Unknown language prefix → 404.
+  - JWT verifier rejects 1-dot / 4-dot / empty / garbage tokens.
+  - bcrypt / cookie parsing edge cases (case-insensitive name, surrounding
+    whitespace, truncated buffer).
+  - b64url decoder rejects `+`, `/`, whitespace, and other non-url-safe chars.
+  - `roles_contains_any` returns false for malformed JSON.
+  - `check_api_key` returns MISSING (not INVALID) when presented is empty.
+- Test totals (per language): **70 / 67 / 39 / 42 = 218** (was 180; +38).
+
+### Added — Per-language and cross-language benchmark runners
+- `benchmark/run_tests.sh` rewritten with two deployment shapes:
+  - Single ALB: `BASE_URL=...`
+  - Local docker-compose: `LOCAL=1` (auto-maps to 8081/8082/8083/8084), or
+    per-language `BASE_URL_JS=...`.
+  - Authenticates once via `/api/<lang>/auth/login` and forwards the cookie.
+- New wrappers `run_js.sh`, `run_python.sh`, `run_c.sh`, `run_cpp.sh`,
+  plus `run_compare.sh` (ranks all four by req/sec).
+- `chaos_test.sh` adopts the same `LOCAL=1` / per-language URL pattern.
+
 ## [1.2.0] - 2026-05-16
 
 ### Added — JWT cookie auth + protected routes + access logging

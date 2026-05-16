@@ -604,3 +604,116 @@ describe('POST /api/js/auth/logout', () => {
     expect(cookie).toMatch(/Max-Age=0/);
   });
 });
+
+// ---------- Edge cases ----------
+
+describe('content edge cases', () => {
+  test('unicode roundtrips through POST + GET', async () => {
+    const { app } = buildApp({ maxBodyBytes: 65536 });
+    const payload = { content: 'hello 🌍 — résumé naïve façade Ω' };
+    const r1 = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify(payload));
+    expect(r1.status).toBe(201);
+    expect(r1.body.item.content).toBe(payload.content);
+    const id = r1.body.item.id;
+    const r2 = await request(app).get(`/api/js/data/${id}`);
+    expect(r2.status).toBe(200);
+    expect(r2.body.item.content).toBe(payload.content);
+  });
+
+  test('content with embedded quotes / backslashes survives roundtrip', async () => {
+    const { app } = buildApp();
+    const value = 'with "quotes" and \\backslash and \nnewline';
+    const r = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({ content: value }));
+    expect(r.status).toBe(201);
+    expect(r.body.item.content).toBe(value);
+  });
+
+  test('body exactly at MAX_BODY_BYTES is accepted; +1 is 413', async () => {
+    const cap = 256;
+    const { app } = buildApp({ maxBodyBytes: cap });
+    const overhead = '{"content":""}'.length;        // 14
+    const exactBody = JSON.stringify({ content: 'x'.repeat(cap - overhead) });
+    expect(exactBody.length).toBe(cap);
+    const ok = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .send(exactBody);
+    expect(ok.status).toBe(201);
+
+    const tooBig = JSON.stringify({ content: 'x'.repeat(cap - overhead + 1) });
+    const big = await request(app)
+      .post('/api/js/data')
+      .set('Content-Type', 'application/json')
+      .send(tooBig);
+    expect(big.status).toBe(413);
+  });
+});
+
+describe('method discipline', () => {
+  test('DELETE /api/js/data returns 4xx (express default 404)', async () => {
+    const { app } = buildApp();
+    const r = await request(app).delete('/api/js/data');
+    expect(r.status).toBeGreaterThanOrEqual(400);
+    expect(r.status).toBeLessThan(500);
+  });
+});
+
+describe('auth edge cases', () => {
+  const KEY = 'k';
+  const SECRET = 'jwt-secret-aaaa';
+
+  test('login with non-string email/password returns 400', async () => {
+    const { app } = authedApp([userRow()]);
+    const r1 = await request(app).post('/api/js/auth/login').send({ email: 1, password: 'p' });
+    expect(r1.status).toBe(400);
+    const r2 = await request(app).post('/api/js/auth/login').send({ email: 'a@b', password: null });
+    expect(r2.status).toBe(400);
+  });
+
+  test('malformed JWT (one dot, four dots, garbage) → 401', async () => {
+    const { app } = authedApp([userRow()]);
+    for (const bad of ['only.one', 'a.b.c.d', 'garbage', '..']) {
+      const r = await request(app).get('/api/js/auth/me').set('Cookie', `session=${bad}`);
+      expect(r.status).toBe(401);
+    }
+  });
+
+  test('cookie value with surrounding whitespace is parsed correctly', async () => {
+    const u = userRow({ roles: ['reader'] });
+    const { app } = authedApp([u]);
+    const token = jsonwebtoken.sign({ sub: '1', email: u.email, roles: u.roles }, JWT_SECRET, {
+      algorithm: 'HS256', expiresIn: 60,
+    });
+    const r = await request(app).get('/api/js/auth/me').set('Cookie', `  other=foo  ; session=${token}  `);
+    expect(r.status).toBe(200);
+  });
+
+  test('X-API-Key header is case-insensitive (HTTP semantics)', async () => {
+    const { app } = buildApp({ apiKey: KEY });
+    const r1 = await request(app).get('/api/js/data').set('x-api-key', KEY);
+    const r2 = await request(app).get('/api/js/data').set('X-API-KEY', KEY);
+    expect(r1.status).not.toBe(401);
+    expect(r2.status).not.toBe(401);
+  });
+});
+
+describe('routing edge cases', () => {
+  test('unknown /api/<other-lang> path → 404', async () => {
+    const { app } = buildApp();
+    const r = await request(app).get('/api/rust/data');
+    expect(r.status).toBe(404);
+  });
+
+  test('path with trailing slash should not crash', async () => {
+    const { app } = buildApp();
+    // express by default does not match trailing slash — accept 404 or 200/401
+    const r = await request(app).get('/api/js/data/');
+    expect(r.status).toBeLessThan(500);
+  });
+});

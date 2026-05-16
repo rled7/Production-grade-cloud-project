@@ -225,3 +225,70 @@ TEST(HandleMe, ProducesJson) {
     EXPECT_NE(r.body.find("\"id\":7"), std::string::npos);
     EXPECT_NE(r.body.find("\"roles\":[\"reader\"]"), std::string::npos);
 }
+
+// ---------- Edge cases ----------
+
+#include <limits>
+
+TEST(ParsePositiveLong, AcceptsLargeValuesUpToLLMax) {
+    long long v = 0;
+    EXPECT_TRUE(parse_positive_long("9223372036854775807", v));
+    EXPECT_EQ(v, std::numeric_limits<long long>::max());
+    EXPECT_FALSE(parse_positive_long("9223372036854775808", v));
+    EXPECT_FALSE(parse_positive_long("99999999999999999999", v));
+}
+
+TEST(JsonEscape, HighUtf8BytesPassthrough) {
+    // é ñ — multi-byte UTF-8 sequences should be preserved verbatim.
+    std::string in = "\xc3\xa9\xc3\xb1";
+    EXPECT_EQ(json_escape(in), in);
+}
+
+TEST(JsonEscape, EmbeddedNullEncodedAsU0000) {
+    std::string in(3, '\0');
+    in[0] = 'a';
+    in[2] = 'b';
+    EXPECT_EQ(json_escape(in), "a\\u0000b");
+}
+
+TEST(B64UrlDecode, RejectsInvalidChars) {
+    EXPECT_FALSE(b64url_decode("aaa!").has_value());
+    // standard b64 + / are NOT valid in b64url
+    EXPECT_FALSE(b64url_decode("a/b+").has_value());
+    EXPECT_FALSE(b64url_decode("a b").has_value());
+}
+
+TEST(JwtVerify, MalformedTokens) {
+    EXPECT_FALSE(jwt_verify_hs256("onlyonedot", "k", 0).has_value());
+    EXPECT_FALSE(jwt_verify_hs256("a.b.c.d", "k", 0).has_value());
+    EXPECT_FALSE(jwt_verify_hs256("", "k", 0).has_value());
+}
+
+TEST(RolesContainsAny, MalformedJsonReturnsFalse) {
+    EXPECT_FALSE(roles_contains_any("not json", {"writer"}));
+    EXPECT_FALSE(roles_contains_any("[\"unterminated", {"writer"}));
+}
+
+TEST(CookieGetSession, MissingValueReturnsNullopt) {
+    EXPECT_FALSE(cookie_get_session("").has_value());
+    EXPECT_FALSE(cookie_get_session("no-equals-here").has_value());
+}
+
+TEST(CookieGetSession, CaseInsensitiveCookieName) {
+    auto t = cookie_get_session("SESSION=abc");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(*t, "abc");
+}
+
+TEST(SerializeItem, EscapesQuotesAndBackslashes) {
+    DataItem it{1, "a\"b\\c", "2024-01-01T00:00:00Z"};
+    auto s = serialize_item(it);
+    EXPECT_NE(s.find(R"("content":"a\"b\\c")"), std::string::npos);
+}
+
+TEST(ParseUserPayload, MissingClaimsGiveDefaults) {
+    auto u = parse_user_payload("{\"foo\":1}");
+    EXPECT_EQ(u.id, 0);
+    EXPECT_TRUE(u.email.empty());
+    EXPECT_TRUE(u.roles_json.empty());
+}

@@ -3,21 +3,42 @@
 # Chaos / abuse tests. Verifies the apps and the infrastructure security
 # suite stay healthy when fed malformed, oversized, or rate-abusive traffic.
 #
-# All probes target the ALB endpoint. The script exits non-zero if any
-# expected protection fails (e.g. a malformed body produces a 5xx instead
-# of a 400, or oversized payloads aren't rejected).
+# Two deployment shapes are supported (matches run_tests.sh):
 #
-# Usage:
-#   BASE_URL=https://api.example.com ./chaos_test.sh
+#   1. Single ALB endpoint:
+#        BASE_URL=https://api.example.com API_KEY=... ./chaos_test.sh
+#
+#   2. Per-language endpoints (local docker-compose):
+#        LOCAL=1 API_KEY=local-dev-key ./chaos_test.sh
+#
+# Exits non-zero if any expected protection fails.
 #
 set -euo pipefail
 
-BASE_URL="${BASE_URL:?BASE_URL is required, e.g. https://api.example.com}"
+LOCAL="${LOCAL:-0}"
 API_KEY="${API_KEY:?API_KEY is required (the value the services were deployed with)}"
 LANGUAGES="${LANGUAGES:-js python c cpp}"
-RATE_LIMIT_FLOOD="${RATE_LIMIT_FLOOD:-3000}" # requests for the rate-limit probe
+RATE_LIMIT_FLOOD="${RATE_LIMIT_FLOOD:-3000}"
 auth_hdr=(-H "X-API-Key: $API_KEY")
 fail=0
+
+resolve_url() {
+    local lang="$1"
+    local var="BASE_URL_$(echo "$lang" | tr '[:lower:]' '[:upper:]')"
+    if [ -n "${!var-}" ]; then echo "${!var}"; return; fi
+    if [ "$LOCAL" = "1" ]; then
+        case "$lang" in
+            js)     echo "http://localhost:8081" ;;
+            python) echo "http://localhost:8082" ;;
+            c)      echo "http://localhost:8083" ;;
+            cpp)    echo "http://localhost:8084" ;;
+            *) echo "FATAL: no URL mapping for lang=$lang" >&2; exit 1 ;;
+        esac
+        return
+    fi
+    if [ -n "${BASE_URL:-}" ]; then echo "$BASE_URL"; return; fi
+    echo "FATAL: BASE_URL or LOCAL=1 required" >&2; exit 1
+}
 
 expect_status() {
     local label="$1" expected="$2" actual="$3"
@@ -32,6 +53,7 @@ expect_status() {
 for lang in $LANGUAGES; do
     echo
     echo "========== $lang =========="
+    BASE_URL="$(resolve_url "$lang")"
     url="$BASE_URL/api/$lang/data"
 
     # 1. Malformed JSON → 400
@@ -110,6 +132,7 @@ echo "========== WAF rate-limit probe (single language) =========="
 # Hammer one endpoint with $RATE_LIMIT_FLOOD requests from this IP. After
 # WAF triggers we should see a substantial number of 403s.
 lang="${LANGUAGES%% *}"
+BASE_URL="$(resolve_url "$lang")"
 url="$BASE_URL/api/$lang/data"
 codes_file="$(mktemp)"
 trap 'rm -f "$codes_file"' EXIT

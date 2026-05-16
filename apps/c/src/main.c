@@ -70,6 +70,9 @@ int main(void) {
     const char *db_pass = env_or("DB_PASSWORD", "");
     const char *redis_host = env_or("REDIS_HOST", "localhost");
     int redis_port = env_int("REDIS_PORT", 6379);
+    const char *redis_tls_s = env_or("REDIS_TLS", "false");
+    bool redis_tls = (strcmp(redis_tls_s, "true") == 0 ||
+                      strcmp(redis_tls_s, "1")    == 0);
     int ttl = env_int("CACHE_TTL_SECONDS", 30);
     int redis_timeout = env_int("REDIS_TIMEOUT_MS", 200);
     size_t max_body = (size_t) env_int("MAX_BODY_BYTES", 1048576);
@@ -107,7 +110,8 @@ int main(void) {
     if (app_ctx.db && db_ensure_schema(app_ctx.db) != DB_OK) {
         fprintf(stderr, "[warn] could not ensure schema on startup; will retry on demand\n");
     }
-    app_ctx.cache = cache_connect(redis_host, redis_port, redis_timeout);
+    app_ctx.cache = cache_connect(redis_host, redis_port, redis_timeout,
+                                  redis_tls);
     if (!app_ctx.cache) {
         fprintf(stderr, "[warn] redis unavailable at startup; serving directly from DB\n");
     }

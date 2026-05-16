@@ -5,6 +5,7 @@
 #include <string>
 
 struct redisContext;
+struct redisSSLContext;
 
 namespace app {
 
@@ -34,7 +35,8 @@ inline bool should_serve_from_cache(CacheStatus status) {
 
 class Cache {
    public:
-    Cache(std::string host, int port, int timeout_ms, int ttl_seconds);
+    Cache(std::string host, int port, int timeout_ms, int ttl_seconds,
+          bool tls = false);
     ~Cache();
 
     Cache(const Cache&) = delete;
@@ -51,12 +53,14 @@ class Cache {
     redisContext* ensure_ctx();   // returns nullptr on error
     void reset_ctx();
 
-    std::string host_;
-    int port_;
-    int timeout_ms_;
-    int ttl_seconds_;
-    std::mutex mutex_;
-    redisContext* ctx_ = nullptr;
+    std::string      host_;
+    int              port_;
+    int              timeout_ms_;
+    int              ttl_seconds_;
+    bool             tls_;
+    redisSSLContext* ssl_ctx_ = nullptr;
+    std::mutex       mutex_;
+    redisContext*    ctx_ = nullptr;
 };
 
 }  // namespace app
