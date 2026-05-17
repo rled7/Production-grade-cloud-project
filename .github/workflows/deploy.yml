@@ -179,7 +179,9 @@ jobs:
       - name: Build image
         run: |
           REPO="${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.lang }}"
-          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:latest" ./apps/${{ matrix.lang }}
+          # SHA-only tag. ECR repos are IMMUTABLE so :latest is intentionally
+          # not pushed; the deploy job patches the ECS task def to the SHA.
+          docker build -t "$REPO:${{ github.sha }}" ./apps/${{ matrix.lang }}
           echo "REPO=$REPO" >> $GITHUB_ENV
       - name: Trivy scan built image
         uses: aquasecurity/trivy-action@0.20.0
@@ -190,9 +192,7 @@ jobs:
           ignore-unfixed: true
           format: table
       - name: Push to ECR
-        run: |
-          docker push "$REPO:${{ github.sha }}"
-          docker push "$REPO:latest"
+        run: docker push "$REPO:${{ github.sha }}"
 
   # ----------------------------------------------------------------------
   # DB migrations — build/push apps/migrator and invoke it as a one-shot
@@ -214,13 +214,27 @@ jobs:
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Build & push migrator image
+      - name: Build & push migrator image (SHA-only)
         run: |
           REPO="${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-migrator"
-          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:latest" \
-            -f apps/migrator/Dockerfile .
+          docker build -t "$REPO:${{ github.sha }}" -f apps/migrator/Dockerfile .
           docker push "$REPO:${{ github.sha }}"
-          docker push "$REPO:latest"
+          echo "REPO=$REPO" >> $GITHUB_ENV
+      - name: Register new migrator task-def revision with SHA image
+        id: migrator_td
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${PROJECT_NAME}-migrator" \
+            --query 'taskDefinition' --output json > td.json
+          # Strip read-only fields, patch image to the SHA we just pushed.
+          jq --arg img "${REPO}:${{ github.sha }}" '
+            (.containerDefinitions[0].image) = $img
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)
+          ' td.json > td-new.json
+          NEW=$(aws ecs register-task-definition --cli-input-json file://td-new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$NEW" >> "$GITHUB_OUTPUT"
       - name: Read network config from SSM
         id: ssm
         run: |
@@ -228,21 +242,19 @@ jobs:
             --query 'Parameter.Value' --output text)
           SG=$(aws ssm get-parameter --name "/${PROJECT_NAME}/migrator/security-group" \
             --query 'Parameter.Value' --output text)
-          # Convert "subnet-aaa,subnet-bbb" -> "subnet-aaa","subnet-bbb"
           QUOTED_SUBNETS=$(echo "$SUBNETS" | sed 's/^/"/;s/,/","/g;s/$/"/')
           echo "subnets=$QUOTED_SUBNETS" >> "$GITHUB_OUTPUT"
           echo "sg=$SG" >> "$GITHUB_OUTPUT"
-      - name: Run migrator task
+      - name: Run migrator task (new revision)
         run: |
           NET='awsvpcConfiguration={subnets=[${{ steps.ssm.outputs.subnets }}],securityGroups=["${{ steps.ssm.outputs.sg }}"],assignPublicIp=DISABLED}'
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --launch-type FARGATE \
             --network-configuration "$NET" \
-            --task-definition "${PROJECT_NAME}-migrator" \
+            --task-definition "${{ steps.migrator_td.outputs.arn }}" \
             --query 'tasks[0].taskArn' --output text)
           echo "task=$TASK_ARN"
-          echo "TASK_ARN=$TASK_ARN" >> $GITHUB_ENV
           aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
           EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[0].exitCode' --output text)
@@ -271,14 +283,34 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Force new deployments
+      - name: Login to ECR (need the registry for the image URI)
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      # For each language: fetch the current task definition, patch the
+      # container image to the SHA we just pushed, register a new revision,
+      # and update the service to that revision. This is the "real" deploy —
+      # update-service --force-new-deployment alone would only re-pull the
+      # same tag, which doesn't exist with IMMUTABLE ECR.
+      - name: Register new task-def revisions + update services
         run: |
           for lang in $LANGUAGES; do
+            IMAGE="${{ steps.ecr.outputs.registry }}/${PROJECT_NAME}-${lang}:${{ github.sha }}"
+            aws ecs describe-task-definition \
+              --task-definition "${PROJECT_NAME}-${lang}" \
+              --query 'taskDefinition' --output json > "td-${lang}.json"
+            jq --arg img "$IMAGE" '
+              (.containerDefinitions[0].image) = $img
+              | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                    .compatibilities, .registeredAt, .registeredBy)
+            ' "td-${lang}.json" > "td-${lang}-new.json"
+            NEW=$(aws ecs register-task-definition \
+              --cli-input-json "file://td-${lang}-new.json" \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
             aws ecs update-service \
               --cluster "$ECS_CLUSTER" \
               --service "${PROJECT_NAME}-${lang}" \
-              --force-new-deployment >/dev/null
-            echo "rolled ${PROJECT_NAME}-${lang}"
+              --task-definition "$NEW" >/dev/null
+            echo "rolled ${PROJECT_NAME}-${lang} -> $NEW"
           done
       - name: Wait for stability
         run: |

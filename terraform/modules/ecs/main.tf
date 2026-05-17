@@ -15,11 +15,15 @@ locals {
 ############################
 # ECR Repositories
 ############################
+# image_tag_mutability = IMMUTABLE prevents a deployed tag from being silently
+# overwritten — CI pushes only SHA-suffixed tags, so re-pushing the same SHA
+# is the only way to "overwrite" (and it should be content-identical).
 resource "aws_ecr_repository" "this" {
   for_each = local.languages_set
 
-  name         = "${var.project_name}-${each.key}"
-  force_delete = true
+  name                 = "${var.project_name}-${each.key}"
+  force_delete         = true
+  image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true
@@ -243,8 +247,10 @@ resource "aws_ecs_service" "this" {
     container_port   = var.app_port
   }
 
+  # CI registers new task-definition revisions (SHA-tagged image) and points
+  # the service at them; Terraform manages only the initial revision.
   lifecycle {
-    ignore_changes = [desired_count]
+    ignore_changes = [desired_count, task_definition]
   }
 
   tags = {
@@ -293,8 +299,9 @@ resource "aws_appautoscaling_policy" "cpu" {
 # non-zero on any migration failure; CI gates the deploy job on that.
 ############################
 resource "aws_ecr_repository" "migrator" {
-  name         = "${var.project_name}-migrator"
-  force_delete = true
+  name                 = "${var.project_name}-migrator"
+  force_delete         = true
+  image_tag_mutability = "IMMUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true

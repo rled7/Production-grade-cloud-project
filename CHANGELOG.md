@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.7.0] - 2026-05-17
+
+### Changed — ECR IMMUTABLE + SHA-only deploys
+- All ECR repos (`<project>-{js,python,c,cpp,migrator}`) set to
+  `image_tag_mutability = "IMMUTABLE"` — a deployed tag can no longer be
+  silently overwritten.
+- CI no longer pushes `:latest`; only `:<github.sha>` per build.
+- Deploy job now describes each ECS task definition, patches
+  `containerDefinitions[0].image` to the SHA via `jq`, registers a new
+  revision, and updates the service to that revision. `--force-new-deployment`
+  alone would not work because IMMUTABLE ECR makes "redeploy the same tag"
+  meaningless.
+- Migrate job uses the same describe → patch → register → `run-task`
+  pattern against `<project>-migrator`.
+- ECS service `lifecycle.ignore_changes` now includes `task_definition`
+  so CI's revision bumps don't trigger Terraform drift.
+
 ## [1.6.0] - 2026-05-17
 
 ### Added — Staging environment + C/C++ access log status code
