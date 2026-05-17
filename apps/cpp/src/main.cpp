@@ -1,9 +1,10 @@
+#include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 
 #include "access_log.hpp"
@@ -15,6 +16,12 @@
 #include "handlers.hpp"
 
 namespace {
+
+// Per-request, per-thread user id stashed by extract_user() and read by the
+// access-log middleware's after_handle. Crow handles each request on a single
+// worker thread, so a thread_local is the cheapest path to thread the JWT sub
+// through to logging without touching every handler signature.
+thread_local std::string g_current_user_id = "-";
 
 app::Config load_config_from_env() {
     app::Config c;
@@ -68,6 +75,48 @@ crow::response forbidden() {
     return r;
 }
 
+// Access-log middleware. Records start time in before_handle, writes the
+// full combined-format line in after_handle once res.code and res.body are
+// known. Matches the JS (morgan) / Python (uvicorn-style) log format.
+struct AccessLogMiddleware {
+    struct context {
+        std::chrono::steady_clock::time_point start;
+    };
+    app::AccessLog* log = nullptr;  // not owned; set by main after construction
+
+    void before_handle(crow::request&, crow::response&, context& ctx) {
+        ctx.start = std::chrono::steady_clock::now();
+        g_current_user_id = "-";  // reset per request
+    }
+
+    void after_handle(crow::request& req, crow::response& res, context& ctx) {
+        if (!log) return;
+        double elapsed_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - ctx.start).count();
+
+        char ts[40];
+        std::time_t now_t = std::time(nullptr);
+        struct tm tm{};
+        gmtime_r(&now_t, &tm);
+        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
+
+        std::string bytes = res.body.empty() ? "-" : std::to_string(res.body.size());
+
+        char line[1024];
+        std::snprintf(line, sizeof(line),
+                      "%s - %s [%s] \"%s %s HTTP/1.1\" %d %s - %.2f ms",
+                      req.remote_ip_address.c_str(),
+                      g_current_user_id.c_str(),
+                      ts,
+                      crow::method_name(req.method).c_str(),
+                      req.url.c_str(),
+                      res.code,
+                      bytes.c_str(),
+                      elapsed_ms);
+        log->write(line);
+    }
+};
+
 }  // namespace
 
 int main() {
@@ -107,21 +156,9 @@ int main() {
     if (!deps.api_key_next.empty()) std::cerr << "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n";
     deps.cookie_secure = cookie_secure;
 
-    crow::SimpleApp crow_app;
+    crow::App<AccessLogMiddleware> crow_app;
     crow_app.loglevel(crow::LogLevel::Warning);
-
-    // ----- Access log: write a line per request before dispatch.
-    auto log_request = [logger = access_log.get()](const crow::request& req) {
-        char ts[40];
-        std::time_t now = std::time(nullptr);
-        struct tm tm{};
-        gmtime_r(&now, &tm);
-        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
-        std::ostringstream line;
-        line << req.remote_ip_address << " - - [" << ts << "] \""
-             << crow::method_name(req.method) << " " << req.url << " HTTP/1.1\"";
-        logger->write(line.str());
-    };
+    crow_app.get_middleware<AccessLogMiddleware>().log = access_log.get();
 
     auto api_key_check = [&deps](const crow::request& req) -> std::optional<crow::response> {
         auto auth = app::check_api_key_dual(req.get_header_value("X-API-Key"),
@@ -140,20 +177,20 @@ int main() {
         auto payload = app::jwt_verify_hs256(
             *token, deps.jwt_secret, static_cast<std::int64_t>(std::time(nullptr)));
         if (!payload) return std::nullopt;
-        return app::parse_user_payload(*payload);
+        auto u = app::parse_user_payload(*payload);
+        if (u.id > 0) g_current_user_id = std::to_string(u.id);
+        return u;
     };
 
-    // /health — public, but still logs.
+    // /health — public.
     CROW_ROUTE(crow_app, "/health").methods(crow::HTTPMethod::GET)
-    ([&deps, log_request](const crow::request& req) {
-        log_request(req);
+    ([&deps]() {
         return to_response(app::handle_health(deps));
     });
 
     // /api/<lang>/auth/login
     CROW_ROUTE(crow_app, "/api/<string>/auth/login").methods(crow::HTTPMethod::POST)
-    ([&deps, log_request, api_key_check](const crow::request& req, std::string lang) {
-        log_request(req);
+    ([&deps, api_key_check](const crow::request& req, std::string lang) {
         if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
@@ -169,8 +206,7 @@ int main() {
 
     // /api/<lang>/auth/logout
     CROW_ROUTE(crow_app, "/api/<string>/auth/logout").methods(crow::HTTPMethod::POST)
-    ([&deps, log_request, api_key_check](const crow::request& req, std::string lang) {
-        log_request(req);
+    ([&deps, api_key_check](const crow::request& req, std::string lang) {
         if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
@@ -186,8 +222,7 @@ int main() {
 
     // /api/<lang>/auth/me
     CROW_ROUTE(crow_app, "/api/<string>/auth/me").methods(crow::HTTPMethod::GET)
-    ([&deps, log_request, api_key_check, extract_user](const crow::request& req, std::string lang) {
-        log_request(req);
+    ([&deps, api_key_check, extract_user](const crow::request& req, std::string lang) {
         if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
@@ -202,8 +237,7 @@ int main() {
     // /api/<lang>/data (GET, POST)
     CROW_ROUTE(crow_app, "/api/<string>/data")
         .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)
-    ([&deps, log_request, api_key_check, extract_user](const crow::request& req, std::string lang) {
-        log_request(req);
+    ([&deps, api_key_check, extract_user](const crow::request& req, std::string lang) {
         if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");
@@ -224,9 +258,8 @@ int main() {
 
     // /api/<lang>/data/<id>
     CROW_ROUTE(crow_app, "/api/<string>/data/<string>").methods(crow::HTTPMethod::GET)
-    ([&deps, log_request, api_key_check, extract_user]
+    ([&deps, api_key_check, extract_user]
      (const crow::request& req, std::string lang, std::string id_str) {
-        log_request(req);
         if (auto err = api_key_check(req)) return std::move(*err);
         if (lang != deps.app_lang) {
             crow::response r(404, R"({"error":"not found"})");

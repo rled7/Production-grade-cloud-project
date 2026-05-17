@@ -28,8 +28,12 @@ static int env_int(const char *k, int d) {
     return (v && *v) ? atoi(v) : d;
 }
 
+/* Log line format (matches the JS + Python services):
+ *   <remote> - <user_or_-> [<iso8601_utc>] "<method> <uri> HTTP/1.1" \
+ *     <status> <bytes_or_-> - <elapsed_ms> ms
+ */
 static void log_access(app_ctx_t *app, struct mg_connection *c,
-                       struct mg_http_message *hm) {
+                       struct mg_http_message *hm, double elapsed_ms) {
     if (!app->access_log) return;
     char ts[40];
     time_t now = time(NULL);
@@ -39,21 +43,48 @@ static void log_access(app_ctx_t *app, struct mg_connection *c,
     char remote[64];
     mg_snprintf(remote, sizeof(remote), "%M", mg_print_ip, &c->rem);
 
+    char user[32];
+    if (app->last_user_id > 0) snprintf(user, sizeof(user), "%ld", app->last_user_id);
+    else                       snprintf(user, sizeof(user), "-");
+
+    char bytes[32];
+    if (app->last_bytes > 0) snprintf(bytes, sizeof(bytes), "%zu", app->last_bytes);
+    else                     snprintf(bytes, sizeof(bytes), "-");
+
     char line[1024];
     int n = snprintf(line, sizeof(line),
-                     "%s - - [%s] \"%.*s %.*s HTTP/1.1\"",
-                     remote, ts,
+                     "%s - %s [%s] \"%.*s %.*s HTTP/1.1\" %d %s - %.2f ms",
+                     remote, user, ts,
                      (int) hm->method.len, hm->method.buf,
-                     (int) hm->uri.len, hm->uri.buf);
+                     (int) hm->uri.len, hm->uri.buf,
+                     app->last_status, bytes, elapsed_ms);
     if (n > 0) access_log_write(app->access_log, line, (size_t) n);
+}
+
+static double ts_diff_ms(struct timespec start, struct timespec end) {
+    return (end.tv_sec - start.tv_sec) * 1000.0 +
+           (end.tv_nsec - start.tv_nsec) / 1.0e6;
 }
 
 static void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
     if (ev != MG_EV_HTTP_MSG) return;
     struct mg_http_message *hm = (struct mg_http_message *) ev_data;
     app_ctx_t *app = (app_ctx_t *) c->fn_data;
-    log_access(app, c, hm);
+
+    /* Reset per-request scratch. Mongoose is single-threaded so this
+     * sequencing is safe. */
+    app->last_status = 0;
+    app->last_bytes = 0;
+    app->last_user_id = -1;
+
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     handle_request(c, hm, app);
+
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    log_access(app, c, hm, ts_diff_ms(start, end));
 }
 
 int main(void) {

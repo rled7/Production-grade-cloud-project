@@ -23,6 +23,13 @@ typedef struct {
     const char *jwt_secret;      /* NULL/"" => JWT verification disabled */
     bool        cookie_secure;   /* true: set Secure attribute on cookies */
     struct access_log *access_log;
+
+    /* Per-request scratch — set by the reply helpers, read by ev_handler in
+     * main.c after handle_request returns, then included in the access log
+     * line. Mongoose is single-threaded so this is safe to share. */
+    int    last_status;     /* HTTP status the request was answered with */
+    size_t last_bytes;      /* body bytes written (0 => log "-") */
+    long   last_user_id;    /* JWT sub if authenticated; -1 otherwise */
 } app_ctx_t;
 
 /* Result of an API-key check. AUTH_DISABLED means the server is configured

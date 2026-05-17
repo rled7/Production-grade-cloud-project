@@ -203,8 +203,17 @@ static void serialize_rows_array(const db_rows_t *rows, sb_t *sb) {
 
 /* ---------- Response helpers ---------- */
 
+static void record_response(struct mg_connection *c, int code, size_t body_len) {
+    app_ctx_t *app = (app_ctx_t *) c->fn_data;
+    if (app) {
+        app->last_status = code;
+        app->last_bytes  = body_len;
+    }
+}
+
 static void reply_json(struct mg_connection *c, int code, const char *body,
                        size_t body_len) {
+    record_response(c, code, body_len);
     mg_http_reply(c, code, "Content-Type: application/json\r\n",
                   "%.*s", (int) body_len, body);
 }
@@ -212,6 +221,7 @@ static void reply_json(struct mg_connection *c, int code, const char *body,
 static void reply_json_with_cookie(struct mg_connection *c, int code,
                                    const char *body, size_t body_len,
                                    const char *cookie_hdr) {
+    record_response(c, code, body_len);
     char headers[1024];
     snprintf(headers, sizeof(headers),
              "Content-Type: application/json\r\nSet-Cookie: %s\r\n",
@@ -238,8 +248,10 @@ static void reply_error(struct mg_connection *c, int code, const char *msg) {
     if (!sb.oom && sb.data) {
         reply_json(c, code, sb.data, sb.len);
     } else {
+        const char fallback[] = "{\"error\":\"internal\"}";
+        record_response(c, code, sizeof(fallback) - 1);
         mg_http_reply(c, code, "Content-Type: application/json\r\n",
-                      "{\"error\":\"internal\"}");
+                      "%s", fallback);
     }
     sb_free(&sb);
 }
@@ -247,6 +259,9 @@ static void reply_error(struct mg_connection *c, int code, const char *msg) {
 /* ---------- Endpoint impls ---------- */
 
 static void handle_health(struct mg_connection *c, app_ctx_t *app) {
+    /* Estimate body length: '{"status":"ok","lang":""}' is 25 chars + lang. */
+    size_t body_len = 25 + strlen(app->app_lang);
+    record_response(c, 200, body_len);
     mg_http_reply(c, 200, "Content-Type: application/json\r\n",
                   "{\"status\":\"ok\",\"lang\":\"%s\"}", app->app_lang);
 }
@@ -611,6 +626,7 @@ static void handle_login(struct mg_connection *c, app_ctx_t *app,
 }
 
 static void handle_logout(struct mg_connection *c, app_ctx_t *app) {
+    record_response(c, 204, 0);
     char cookie_hdr[256];
     snprintf(cookie_hdr, sizeof(cookie_hdr),
              "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0%s",
@@ -704,6 +720,7 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm,
         reply_error(c, 401, "authentication required");
         return;
     }
+    if (have_user) app->last_user_id = cur.id;
 
     /* /auth/me (GET) */
     if (sublen == 8 && memcmp(sub, "/auth/me", 8) == 0) {
