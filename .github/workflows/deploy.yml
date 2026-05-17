@@ -42,7 +42,7 @@ jobs:
     defaults: { run: { working-directory: apps/python } }
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -156,7 +156,7 @@ jobs:
           npx eslint src/ tests/
       - name: Set up Python (python)
         if: matrix.lang == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Ruff (python)
