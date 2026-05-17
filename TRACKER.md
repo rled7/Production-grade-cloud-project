@@ -118,3 +118,9 @@ Timestamps are UTC, recorded at phase completion.
 - [x] 16 new dual-key tests (4 per language); totals 73/70/44/47 = 234 - 2026-05-16 03:00 UTC
 - [x] README "Rotating the API key" procedure - 2026-05-16 03:00 UTC
 - [x] CODEOWNERS / PR template / .editorconfig / SECURITY.md / Dependabot - 2026-05-16 03:00 UTC
+
+## Post-1.0: C/C++ access log status code + staging env (1.6.0)
+- [x] C: app_ctx_t scratch + record_response + log AFTER handle_request - 2026-05-17 01:00 UTC
+- [x] C++: App<AccessLogMiddleware> + before/after_handle + thread_local user id - 2026-05-17 01:00 UTC
+- [x] terraform/environments/staging/ with smaller defaults + isolated state key - 2026-05-17 01:00 UTC
+- [x] README "Environments" section - 2026-05-17 01:00 UTC

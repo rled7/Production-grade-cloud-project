@@ -307,6 +307,15 @@ The CI pipeline (`.github/workflows/deploy.yml`) runs all four suites plus
 `terraform validate`/`fmt -check` plus Trivy filesystem and IaC scans, and
 **blocks image build/push if any of them fails**.
 
+## Environments
+
+Two Terraform root environments live under `terraform/environments/`:
+
+- `prod/`     — production sizing (Multi-AZ RDS, `desired_count=2`, `waf_rate_limit=2000`).
+- `staging/` — smaller / cheaper defaults (single-AZ RDS, `desired_count=1`, `waf_rate_limit=1000`), separate VPC CIDR (`10.1.0.0/16`), separate state key (`staging/terraform.tfstate`).
+
+Both environments **share** the same state-backend S3 bucket + DynamoDB lock table that `setup-backend.sh` creates — only the state key differs. Apply order is up to you (most teams `terraform apply` to staging first, smoke-test, then prod).
+
 ## Deploying
 
 ```bash

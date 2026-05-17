@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.6.0] - 2026-05-17
+
+### Added — Staging environment + C/C++ access log status code
+- `terraform/environments/staging/` — a copy of the prod root with smaller /
+  cheaper defaults (single-AZ RDS, `desired_count=1`, `waf_rate_limit=1000`,
+  separate VPC CIDR `10.1.0.0/16`). Shares the same state-backend S3 bucket
+  + lock table as prod; isolated via `staging/terraform.tfstate` key.
+- C and C++ services now emit the full combined access-log format
+  (status + bytes + elapsed_ms + user_id), matching JS (morgan) and Python
+  (uvicorn-style). C threads scratch fields through `app_ctx_t` since
+  mongoose is single-threaded; C++ uses a Crow `App<AccessLogMiddleware>`
+  with `before_handle` / `after_handle` and a thread_local for the JWT sub.
+
 ## [1.5.0] - 2026-05-16
 
 ### Added — Graceful API-key rotation + repo housekeeping
