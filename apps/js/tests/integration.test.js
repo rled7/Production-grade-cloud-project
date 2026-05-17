@@ -114,10 +114,11 @@ function buildApp(overrides = {}) {
     cache,
     lang: overrides.lang || 'js',
     maxBodyBytes: overrides.maxBodyBytes || 1024, // small for size tests
-    apiKey:     overrides.apiKey     !== undefined ? overrides.apiKey     : '',
-    apiKeyNext: overrides.apiKeyNext !== undefined ? overrides.apiKeyNext : '',
-    jwtSecret:  overrides.jwtSecret  !== undefined ? overrides.jwtSecret  : '',
-    cookieSecure: overrides.cookieSecure !== undefined ? overrides.cookieSecure : false,
+    apiKey:        overrides.apiKey        !== undefined ? overrides.apiKey        : '',
+    apiKeyNext:    overrides.apiKeyNext    !== undefined ? overrides.apiKeyNext    : '',
+    jwtSecret:     overrides.jwtSecret     !== undefined ? overrides.jwtSecret     : '',
+    jwtSecretNext: overrides.jwtSecretNext !== undefined ? overrides.jwtSecretNext : '',
+    cookieSecure:  overrides.cookieSecure  !== undefined ? overrides.cookieSecure  : false,
   });
   return { app, db, cache };
 }
@@ -739,5 +740,49 @@ describe('API-key rotation (api_key + api_key_next)', () => {
     const { app } = buildApp({ apiKey: '', apiKeyNext: NEW });
     expect((await request(app).get('/api/js/data').set('X-API-Key', NEW)).status).toBe(200);
     expect((await request(app).get('/api/js/data')).status).toBe(401);
+  });
+});
+
+describe('JWT secret rotation (jwt_secret + jwt_secret_next)', () => {
+  const OLD = 'old-jwt-secret';
+  const NEW = 'new-jwt-secret';
+
+  function appWith(jwtSecret, jwtSecretNext) {
+    const db = makeAuthDb([userRow({ id: 1, roles: ['reader'] })]);
+    const cache = makeFakeCache();
+    return createApp({ db, cache, lang: 'js', apiKey: '', jwtSecret, jwtSecretNext, cookieSecure: false });
+  }
+
+  test('token signed by old secret still verifies after rotating jwt_secret_next in', async () => {
+    const tokenSignedByOld = jsonwebtoken.sign(
+      { sub: '1', email: 'alice@example.com', roles: ['reader'] },
+      OLD,
+      { algorithm: 'HS256', expiresIn: 60 }
+    );
+    // Stage: jwt_secret is still OLD, jwt_secret_next is the NEW one. Old tokens valid.
+    const app = appWith(OLD, NEW);
+    const r = await request(app).get('/api/js/auth/me').set('Cookie', `session=${tokenSignedByOld}`);
+    expect(r.status).toBe(200);
+  });
+
+  test('after swap (jwt_secret=NEW, jwt_secret_next=OLD), tokens from BOTH still verify', async () => {
+    const oldToken = jsonwebtoken.sign({ sub: '1', email: 'a@b', roles: [] }, OLD, { algorithm: 'HS256', expiresIn: 60 });
+    const newToken = jsonwebtoken.sign({ sub: '1', email: 'a@b', roles: [] }, NEW, { algorithm: 'HS256', expiresIn: 60 });
+    const app = appWith(NEW, OLD);
+    expect((await request(app).get('/api/js/auth/me').set('Cookie', `session=${oldToken}`)).status).toBe(200);
+    expect((await request(app).get('/api/js/auth/me').set('Cookie', `session=${newToken}`)).status).toBe(200);
+  });
+
+  test('after rotation completes (jwt_secret_next cleared), old tokens are rejected', async () => {
+    const oldToken = jsonwebtoken.sign({ sub: '1', email: 'a@b', roles: [] }, OLD, { algorithm: 'HS256', expiresIn: 60 });
+    const app = appWith(NEW, '');
+    const r = await request(app).get('/api/js/auth/me').set('Cookie', `session=${oldToken}`);
+    expect(r.status).toBe(401);
+  });
+
+  test('garbage token still rejected during rotation', async () => {
+    const app = appWith(NEW, OLD);
+    const r = await request(app).get('/api/js/auth/me').set('Cookie', 'session=garbage.token.value');
+    expect(r.status).toBe(401);
   });
 });

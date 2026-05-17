@@ -116,6 +116,7 @@ def make_config(
     api_key: str = "",
     api_key_next: str = "",
     jwt_secret: str = "",
+    jwt_secret_next: str = "",
 ) -> Config:
     return Config(
         port=8080,
@@ -134,6 +135,7 @@ def make_config(
         api_key=api_key,
         api_key_next=api_key_next,
         jwt_secret=jwt_secret,
+        jwt_secret_next=jwt_secret_next,
         cookie_secure=False,
         access_log_path="./access.log",
         access_log_max_bytes=10485760,
@@ -728,3 +730,51 @@ def test_api_key_only_next_set_still_enforces(fake_db, fake_cache):
     with TestClient(app) as c:
         assert c.get("/api/python/data", headers={"X-API-Key": "new"}).status_code == 200
         assert c.get("/api/python/data").status_code == 401
+
+
+# ---------- JWT secret rotation ----------
+
+def _jwt(secret, sub="1", roles=None, ttl=60):
+    now = int(time.time())
+    payload = {"sub": sub, "email": "a@b", "roles": roles or [], "iat": now, "exp": now + ttl}
+    return pyjwt.encode(payload, secret, algorithm="HS256")
+
+
+def _app_with_jwt(jwt_secret, jwt_secret_next):
+    return create_app(
+        db=UsersDB([make_user()]),
+        cache=FakeCache(),
+        config=make_config(jwt_secret=jwt_secret, jwt_secret_next=jwt_secret_next),
+    )
+
+
+def test_jwt_rotation_old_token_accepted_while_secret_next_set():
+    app = _app_with_jwt("OLD", "NEW")
+    token = _jwt("OLD")
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": token})
+        assert r.status_code == 200
+
+
+def test_jwt_rotation_both_secrets_after_swap():
+    # After the swap step, primary=NEW, secret_next=OLD.
+    app = _app_with_jwt("NEW", "OLD")
+    with TestClient(app) as c:
+        r1 = c.get("/api/python/auth/me", cookies={"session": _jwt("OLD")})
+        r2 = c.get("/api/python/auth/me", cookies={"session": _jwt("NEW")})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+
+
+def test_jwt_rotation_complete_clears_next_and_rejects_old():
+    app = _app_with_jwt("NEW", "")
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": _jwt("OLD")})
+        assert r.status_code == 401
+
+
+def test_jwt_garbage_token_still_rejected_during_rotation():
+    app = _app_with_jwt("NEW", "OLD")
+    with TestClient(app) as c:
+        r = c.get("/api/python/auth/me", cookies={"session": "garbage.token.value"})
+        assert r.status_code == 401

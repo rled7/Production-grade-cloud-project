@@ -10,11 +10,16 @@ function signSession(payload, secret) {
   return jwt.sign(payload, secret, { algorithm: 'HS256', expiresIn: TOKEN_TTL_SECONDS });
 }
 
-function verifySession(token, secret) {
+function verifySession(token, secret, secretNext) {
   try {
     return jwt.verify(token, secret, { algorithms: ['HS256'] });
   } catch (_) {
-    return null;
+    if (!secretNext) return null;
+    try {
+      return jwt.verify(token, secretNext, { algorithms: ['HS256'] });
+    } catch (_) {
+      return null;
+    }
   }
 }
 

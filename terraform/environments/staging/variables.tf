@@ -139,3 +139,21 @@ variable "jwt_secret" {
   type        = string
   sensitive   = true
 }
+
+variable "jwt_secret_next" {
+  description = "Optional second JWT secret accepted for verification during rotation."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "admin_email" {
+  description = "Bootstrap admin user email; migrator seeds on every deploy."
+  type        = string
+}
+
+variable "admin_password" {
+  description = "Bootstrap admin password (UPSERTed by migrator)."
+  type        = string
+  sensitive   = true
+}

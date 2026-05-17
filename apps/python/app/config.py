@@ -47,6 +47,7 @@ class Config:
     api_key: str  # empty string => API-key gate disabled
     api_key_next: str  # optional second key accepted during rotation
     jwt_secret: str  # empty string => JWT verification disabled
+    jwt_secret_next: str  # optional second secret accepted during rotation
     cookie_secure: bool
     access_log_path: str
     access_log_max_bytes: int
@@ -86,6 +87,7 @@ def load_config() -> Config:
         api_key=_env_str("API_KEY", ""),
         api_key_next=_env_str("API_KEY_NEXT", ""),
         jwt_secret=_env_str("JWT_SECRET", ""),
+        jwt_secret_next=_env_str("JWT_SECRET_NEXT", ""),
         cookie_secure=_env_bool("COOKIE_SECURE", True),
         access_log_path=_env_str("ACCESS_LOG_PATH", "./access.log"),
         access_log_max_bytes=_env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024),

@@ -185,14 +185,17 @@ module "ecs" {
   languages          = var.languages
   target_group_arns  = module.alb.target_group_arns
 
-  db_host      = module.rds.db_address
-  db_port      = module.rds.db_port
-  db_name      = var.db_name
-  db_username  = var.db_username
-  db_password  = var.db_password
-  api_key      = var.api_key
-  api_key_next = var.api_key_next
-  jwt_secret   = var.jwt_secret
+  db_host         = module.rds.db_address
+  db_port         = module.rds.db_port
+  db_name         = var.db_name
+  db_username     = var.db_username
+  db_password     = var.db_password
+  api_key         = var.api_key
+  api_key_next    = var.api_key_next
+  jwt_secret      = var.jwt_secret
+  jwt_secret_next = var.jwt_secret_next
+  admin_email     = var.admin_email
+  admin_password  = var.admin_password
 
   redis_host = module.elasticache.redis_endpoint
   redis_port = module.elasticache.redis_port

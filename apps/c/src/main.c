@@ -113,6 +113,7 @@ int main(void) {
     const char *api_key = env_or("API_KEY", "");
     const char *api_key_next = env_or("API_KEY_NEXT", "");
     const char *jwt_secret = env_or("JWT_SECRET", "");
+    const char *jwt_secret_next = env_or("JWT_SECRET_NEXT", "");
     const char *cookie_secure_s = env_or("COOKIE_SECURE", "true");
     bool cookie_secure =
         !(strcmp(cookie_secure_s, "false") == 0 || strcmp(cookie_secure_s, "0") == 0);
@@ -128,14 +129,17 @@ int main(void) {
     app_ctx.api_key = api_key;
     app_ctx.api_key_next = api_key_next;
     app_ctx.jwt_secret = jwt_secret;
+    app_ctx.jwt_secret_next = jwt_secret_next;
     app_ctx.cookie_secure = cookie_secure;
     app_ctx.access_log = access_log_open(access_log_path, access_log_max_bytes, access_log_backups);
     if (!api_key[0])
         fprintf(stderr, "[warn] API_KEY empty — API-key gate DISABLED\n");
     if (api_key_next[0])
         fprintf(stderr, "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n");
-    if (!jwt_secret[0])
-        fprintf(stderr, "[warn] JWT_SECRET empty — JWT verification DISABLED\n");
+    if (!jwt_secret[0] && !jwt_secret_next[0])
+        fprintf(stderr, "[warn] JWT_SECRET and JWT_SECRET_NEXT both empty — JWT verification DISABLED\n");
+    if (jwt_secret_next[0])
+        fprintf(stderr, "[info] JWT_SECRET_NEXT set — rotation in progress (both secrets accepted for verify)\n");
     if (!app_ctx.access_log)
         fprintf(stderr, "[warn] access log file unavailable (%s)\n", access_log_path);
     int n = build_api_prefix(app_lang, app_ctx.api_prefix, sizeof(app_ctx.api_prefix));

@@ -43,7 +43,8 @@ struct AppDeps {
     std::size_t max_body_bytes = 1048576;
     std::string api_key;      // empty => API-key gate disabled
     std::string api_key_next; // empty => no second key (rotation off)
-    std::string jwt_secret;   // empty => JWT verification disabled
+    std::string jwt_secret;      // empty => primary verify disabled
+    std::string jwt_secret_next; // empty => no fallback (rotation off)
     bool cookie_secure = true;
 };
 

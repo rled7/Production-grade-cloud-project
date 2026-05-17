@@ -19,6 +19,14 @@ int jwt_sign_hs256(const char *payload_json, size_t payload_len, const char *sec
 int jwt_verify_hs256(const char *token, size_t token_len, const char *secret, size_t secret_len,
                      long long current_time_unix, char *payload_out, size_t payload_cap);
 
+/* Dual-secret variant for graceful rotation. Tries `secret` first, then
+ * `secret_next` if non-NULL/non-empty. Returns 0 on first successful verify. */
+int jwt_verify_hs256_dual(const char *token, size_t token_len,
+                          const char *secret, size_t secret_len,
+                          const char *secret_next, size_t secret_next_len,
+                          long long current_time_unix,
+                          char *payload_out, size_t payload_cap);
+
 /* Extract `session=<token>` from a Cookie header value. Returns token length
  * written into token_out (excl NUL), or -1 if cookie not present / too large. */
 int cookie_get_session(const char *cookie_header, size_t cookie_len, char *token_out,

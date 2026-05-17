@@ -18,6 +18,12 @@ std::string jwt_sign_hs256(std::string_view payload_json, std::string_view secre
 // expired. Caller supplies the current unix time for exp comparison.
 std::optional<std::string> jwt_verify_hs256(std::string_view token, std::string_view secret,
                                             std::int64_t now_unix);
+// Dual-secret verify for graceful rotation. Tries `secret` first, then
+// `secret_next` if non-empty. Returns the payload from the first match.
+std::optional<std::string> jwt_verify_hs256_dual(std::string_view token,
+                                                 std::string_view secret,
+                                                 std::string_view secret_next,
+                                                 std::int64_t now_unix);
 
 // Parse `session=<token>` out of a Cookie header value.
 std::optional<std::string> cookie_get_session(std::string_view cookie_header);

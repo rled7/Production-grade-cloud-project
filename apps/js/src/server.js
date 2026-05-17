@@ -11,6 +11,7 @@ const MAX_BODY_BYTES   = parseInt(process.env.MAX_BODY_BYTES || '1048576', 10);
 const API_KEY          = process.env.API_KEY || '';
 const API_KEY_NEXT     = process.env.API_KEY_NEXT || '';
 const JWT_SECRET       = process.env.JWT_SECRET || '';
+const JWT_SECRET_NEXT  = process.env.JWT_SECRET_NEXT || '';
 const COOKIE_SECURE    = (process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false';
 const ACCESS_LOG_PATH  = process.env.ACCESS_LOG_PATH || './access.log';
 const ACCESS_LOG_MAX_BYTES = parseInt(process.env.ACCESS_LOG_MAX_BYTES || `${10 * 1024 * 1024}`, 10);
@@ -31,7 +32,8 @@ async function main() {
     backups: ACCESS_LOG_BACKUPS,
   });
 
-  if (API_KEY_NEXT) console.log('[server] API_KEY_NEXT is set — rotation in progress (both keys accepted).');
+  if (API_KEY_NEXT)    console.log('[server] API_KEY_NEXT is set — rotation in progress (both keys accepted).');
+  if (JWT_SECRET_NEXT) console.log('[server] JWT_SECRET_NEXT is set — rotation in progress (both secrets accepted for verify).');
   const app = createApp({
     db, cache,
     lang: LANG,
@@ -39,6 +41,7 @@ async function main() {
     apiKey: API_KEY,
     apiKeyNext: API_KEY_NEXT,
     jwtSecret: JWT_SECRET,
+    jwtSecretNext: JWT_SECRET_NEXT,
     cookieSecure: COOKIE_SECURE,
     accessLog,
   });

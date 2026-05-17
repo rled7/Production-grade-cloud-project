@@ -77,10 +77,13 @@ resource "aws_secretsmanager_secret" "db" {
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id = aws_secretsmanager_secret.db.id
   secret_string = jsonencode({
-    DB_PASSWORD  = var.db_password
-    API_KEY      = var.api_key
-    API_KEY_NEXT = var.api_key_next
-    JWT_SECRET   = var.jwt_secret
+    DB_PASSWORD     = var.db_password
+    API_KEY         = var.api_key
+    API_KEY_NEXT    = var.api_key_next
+    JWT_SECRET      = var.jwt_secret
+    JWT_SECRET_NEXT = var.jwt_secret_next
+    ADMIN_EMAIL     = var.admin_email
+    ADMIN_PASSWORD  = var.admin_password
   })
 }
 
@@ -190,6 +193,10 @@ resource "aws_ecs_task_definition" "this" {
         {
           name      = "JWT_SECRET"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:JWT_SECRET::"
+        },
+        {
+          name      = "JWT_SECRET_NEXT"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:JWT_SECRET_NEXT::"
         }
       ]
 
@@ -349,6 +356,14 @@ resource "aws_ecs_task_definition" "migrator" {
         {
           name      = "PGPASSWORD"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:DB_PASSWORD::"
+        },
+        {
+          name      = "ADMIN_EMAIL"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:ADMIN_EMAIL::"
+        },
+        {
+          name      = "ADMIN_PASSWORD"
+          valueFrom = "${aws_secretsmanager_secret.db.arn}:ADMIN_PASSWORD::"
         }
       ]
 

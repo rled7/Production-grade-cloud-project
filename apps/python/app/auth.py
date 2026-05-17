@@ -18,11 +18,19 @@ def sign_session(claims: dict[str, Any], secret: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def verify_session(token: str, secret: str) -> dict[str, Any] | None:
-    try:
-        return jwt.decode(token, secret, algorithms=["HS256"])
-    except jwt.PyJWTError:
-        return None
+def verify_session(token: str, secret: str, secret_next: str = "") -> dict[str, Any] | None:
+    """Verify against the primary secret first; fall back to secret_next for graceful rotation."""
+    if secret:
+        try:
+            return jwt.decode(token, secret, algorithms=["HS256"])
+        except jwt.PyJWTError:
+            pass
+    if secret_next:
+        try:
+            return jwt.decode(token, secret_next, algorithms=["HS256"])
+        except jwt.PyJWTError:
+            pass
+    return None
 
 
 def build_set_cookie(token: str, *, secure: bool, max_age: int = TOKEN_TTL_SECONDS) -> str:

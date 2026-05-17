@@ -228,4 +228,19 @@ bool roles_contains_any(std::string_view roles_json,
     return false;
 }
 
+std::optional<std::string> jwt_verify_hs256_dual(std::string_view token,
+                                                 std::string_view secret,
+                                                 std::string_view secret_next,
+                                                 std::int64_t now_unix) {
+    if (!secret.empty()) {
+        auto r = jwt_verify_hs256(token, secret, now_unix);
+        if (r) return r;
+    }
+    if (!secret_next.empty()) {
+        auto r = jwt_verify_hs256(token, secret_next, now_unix);
+        if (r) return r;
+    }
+    return std::nullopt;
+}
+
 } // namespace app

@@ -82,6 +82,26 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
+variable "jwt_secret_next" {
+  description = "Optional second JWT secret accepted in parallel with jwt_secret. Used for graceful rotation: set to the new secret, redeploy (verifies old tokens with primary, new tokens with old secret), then swap. Empty when no rotation in flight."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "admin_email" {
+  description = "Email of the bootstrap admin user the migrator seeds on every deploy. Empty disables seeding (use when the users table is managed elsewhere)."
+  type        = string
+  default     = ""
+}
+
+variable "admin_password" {
+  description = "Password for the bootstrap admin user. bcrypt-hashed before insert. Stored in Secrets Manager. Empty disables seeding."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "redis_tls" {
   description = "Whether the ElastiCache cluster has in-transit encryption enabled. Apps connect via TLS when true."
   type        = bool

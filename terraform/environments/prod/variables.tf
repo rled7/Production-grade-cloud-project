@@ -101,6 +101,24 @@ variable "jwt_secret" {
   sensitive   = true
 }
 
+variable "jwt_secret_next" {
+  description = "Optional second JWT secret accepted for verification during rotation. Empty when no rotation in flight."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "admin_email" {
+  description = "Email of the bootstrap admin user the migrator seeds on every deploy."
+  type        = string
+}
+
+variable "admin_password" {
+  description = "Password for the bootstrap admin user. Stored in Secrets Manager."
+  type        = string
+  sensitive   = true
+}
+
 variable "db_instance_class" {
   description = "RDS instance class."
   type        = string

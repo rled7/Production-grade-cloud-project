@@ -43,6 +43,7 @@ app::Config load_config_from_env() {
     c.max_body_bytes = static_cast<std::size_t>(app::env_int("MAX_BODY_BYTES", 1048576));
     c.api_key = app::env_str("API_KEY", "");
     c.api_key_next = app::env_str("API_KEY_NEXT", "");
+    c.jwt_secret_next = app::env_str("JWT_SECRET_NEXT", "");
     return c;
 }
 
@@ -151,8 +152,11 @@ int main() {
     deps.api_key = cfg.api_key;
     deps.api_key_next = cfg.api_key_next;
     deps.jwt_secret = jwt_secret;
+    deps.jwt_secret_next = cfg.jwt_secret_next;
     if (!deps.api_key_next.empty())
         std::cerr << "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n";
+    if (!deps.jwt_secret_next.empty())
+        std::cerr << "[info] JWT_SECRET_NEXT set — rotation in progress (both secrets accepted for verify)\n";
     deps.cookie_secure = cookie_secure;
 
     crow::App<AccessLogMiddleware> crow_app;
@@ -169,14 +173,15 @@ int main() {
     };
 
     auto extract_user = [&deps](const crow::request &req) -> std::optional<app::CurrentUser> {
-        if (deps.jwt_secret.empty())
+        if (deps.jwt_secret.empty() && deps.jwt_secret_next.empty())
             return std::nullopt;
         auto cookie_hdr = req.get_header_value("Cookie");
         auto token = app::cookie_get_session(cookie_hdr);
         if (!token)
             return std::nullopt;
-        auto payload = app::jwt_verify_hs256(*token, deps.jwt_secret,
-                                             static_cast<std::int64_t>(std::time(nullptr)));
+        auto payload = app::jwt_verify_hs256_dual(
+            *token, deps.jwt_secret, deps.jwt_secret_next,
+            static_cast<std::int64_t>(std::time(nullptr)));
         if (!payload)
             return std::nullopt;
         auto u = app::parse_user_payload(*payload);
@@ -257,10 +262,11 @@ int main() {
                     return r;
                 }
                 auto user = extract_user(req);
-                if (!deps.jwt_secret.empty() && !user)
+                bool auth_active = !deps.jwt_secret.empty() || !deps.jwt_secret_next.empty();
+                if (auth_active && !user)
                     return unauthorized();
                 if (req.method == crow::HTTPMethod::POST) {
-                    if (!deps.jwt_secret.empty() &&
+                    if (auth_active &&
                         !app::roles_contains_any(user->roles_json, {"writer", "admin"})) {
                         return forbidden();
                     }
@@ -281,7 +287,8 @@ int main() {
                     r.set_header("Content-Type", "application/json");
                     return r;
                 }
-                if (!deps.jwt_secret.empty() && !extract_user(req))
+                bool auth_active = !deps.jwt_secret.empty() || !deps.jwt_secret_next.empty();
+                if (auth_active && !extract_user(req))
                     return unauthorized();
                 return to_response(app::handle_get_one(deps, id_str));
             });

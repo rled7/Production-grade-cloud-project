@@ -20,7 +20,8 @@ typedef struct {
     size_t max_body_bytes;
     const char *api_key;      /* NULL/"" => API-key gate disabled */
     const char *api_key_next; /* NULL/"" => no second key accepted (rotation off) */
-    const char *jwt_secret;   /* NULL/"" => JWT verification disabled */
+    const char *jwt_secret;      /* NULL/"" => primary verify disabled */
+    const char *jwt_secret_next; /* NULL/"" => no fallback secret (rotation off) */
     bool cookie_secure;       /* true: set Secure attribute on cookies */
     struct access_log *access_log;
 

@@ -27,6 +27,15 @@ api_key_next = ""
 # Generate with: openssl rand -hex 64
 jwt_secret = "CHANGE-ME-USE-A-LONG-RANDOM-SECRET-NO-LESS-THAN-32-BYTES"
 
+# Optional second JWT secret accepted for verification during rotation.
+# Leave empty when not rotating; see README "Rotating the JWT secret".
+jwt_secret_next = ""
+
+# Bootstrap admin user. The migrator task seeds (UPSERTs) this user on every
+# deploy, so updating the password here and re-applying rotates it.
+admin_email    = "admin@example.com"
+admin_password = "CHANGE-ME-USE-A-STRONG-ADMIN-PASSWORD"
+
 # Optional sizing overrides
 # db_instance_class = "db.t3.micro"
 # db_multi_az       = true

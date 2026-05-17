@@ -21,7 +21,7 @@ RUN apt-get update \
 WORKDIR /work
 COPY db /work/db
 
-# Default command runs every pending migration. CI can override the command
-# (e.g. ["bash","-c","/work/db/migrate.sh up && /work/db/migrate.sh seed-admin --email $ADMIN_EMAIL --password $ADMIN_PASSWORD"]).
-ENTRYPOINT ["/work/db/migrate.sh"]
-CMD ["up"]
+# entrypoint.sh runs `migrate.sh up` then UPSERTs the admin user when
+# ADMIN_EMAIL and ADMIN_PASSWORD are set in the env (injected by ECS from
+# Secrets Manager).
+ENTRYPOINT ["/work/db/entrypoint.sh"]

@@ -319,3 +319,45 @@ TEST(CheckApiKeyDual, OnlySecondarySet) {
     EXPECT_EQ(check_api_key_dual("old", "", "new"), AuthStatus::Invalid);
     EXPECT_EQ(check_api_key_dual("", "", "new"), AuthStatus::Missing);
 }
+
+// ---------- JWT secret rotation (jwt_verify_hs256_dual) ----------
+
+namespace {
+std::string make_token(const std::string& secret, std::int64_t exp_offset) {
+    std::int64_t now = std::time(nullptr);
+    std::string payload = std::string("{\"sub\":\"1\",\"exp\":") +
+                          std::to_string(now + exp_offset) + "}";
+    return jwt_sign_hs256(payload, secret);
+}
+}  // namespace
+
+TEST(JwtVerifyDual, PrimaryMatch) {
+    auto tok = make_token("OLD", 60);
+    auto r = jwt_verify_hs256_dual(tok, "OLD", "NEW", std::time(nullptr));
+    EXPECT_TRUE(r.has_value());
+}
+
+TEST(JwtVerifyDual, SecondaryMatch) {
+    auto tok = make_token("OLD", 60);
+    // Primary is now NEW (mismatch); secondary OLD matches.
+    auto r = jwt_verify_hs256_dual(tok, "NEW", "OLD", std::time(nullptr));
+    EXPECT_TRUE(r.has_value());
+}
+
+TEST(JwtVerifyDual, NeitherMatches) {
+    auto tok = make_token("OTHER", 60);
+    auto r = jwt_verify_hs256_dual(tok, "NEW", "OLD", std::time(nullptr));
+    EXPECT_FALSE(r.has_value());
+}
+
+TEST(JwtVerifyDual, PrimaryEmptyFallsBackToSecondary) {
+    auto tok = make_token("NEW", 60);
+    auto r = jwt_verify_hs256_dual(tok, "", "NEW", std::time(nullptr));
+    EXPECT_TRUE(r.has_value());
+}
+
+TEST(JwtVerifyDual, BothEmptyReturnsNullopt) {
+    auto tok = make_token("X", 60);
+    auto r = jwt_verify_hs256_dual(tok, "", "", std::time(nullptr));
+    EXPECT_FALSE(r.has_value());
+}

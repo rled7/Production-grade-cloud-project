@@ -131,3 +131,11 @@ Timestamps are UTC, recorded at phase completion.
 - [x] eslint + ruff + clang-format configs - 2026-05-17 03:00 UTC
 - [x] Repo-wide clang-format reformat baseline - 2026-05-17 03:00 UTC
 - [x] CI `lint` matrix job gating security-fs-scan - 2026-05-17 03:00 UTC
+
+## Post-1.0: Pre-deploy hardening (1.9.0)
+- [x] admin_email / admin_password TF vars + Secrets Manager + migrator inject - 2026-05-17 04:00 UTC
+- [x] db/entrypoint.sh UPSERTs admin user on every deploy - 2026-05-17 04:00 UTC
+- [x] jwt_secret_next TF var + dual-secret verify in all 4 languages - 2026-05-17 04:00 UTC
+- [x] 17 new JWT rotation tests; totals 77/74/48/52 = 251 - 2026-05-17 04:00 UTC
+- [x] terraform/scripts/bootstrap-deploy.sh (targeted apply + push + apply) - 2026-05-17 04:00 UTC
+- [x] DEPLOYMENT.md with pre-deploy checklist + cost + Trivy/plan recipes + smoke test - 2026-05-17 04:00 UTC

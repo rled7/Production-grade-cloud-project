@@ -348,6 +348,59 @@ static void test_check_api_key_dual_only_secondary_set(void) {
     TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key_dual(NULL, 0, "", "new"));
 }
 
+/* ---------- jwt_verify_hs256_dual ---------- */
+
+static void make_jwt(const char *secret, long long exp_offset, char *out, size_t out_cap) {
+    long long now = (long long)time(NULL);
+    char payload[256];
+    int pn = snprintf(payload, sizeof(payload),
+                      "{\"sub\":\"1\",\"exp\":%lld}", now + exp_offset);
+    int n = jwt_sign_hs256(payload, (size_t)pn, secret, strlen(secret), out, out_cap);
+    (void)n;
+}
+
+static void test_jwt_verify_dual_primary_match(void) {
+    char token[2048];
+    make_jwt("OLD", 60, token, sizeof(token));
+    char back[256];
+    int r = jwt_verify_hs256_dual(token, strlen(token),
+                                  "OLD", 3, "NEW", 3,
+                                  (long long)time(NULL), back, sizeof(back));
+    TEST_ASSERT_EQUAL_INT(0, r);
+}
+
+static void test_jwt_verify_dual_secondary_match(void) {
+    char token[2048];
+    make_jwt("OLD", 60, token, sizeof(token));
+    char back[256];
+    /* primary is NEW (doesn't match), secondary is OLD (matches). */
+    int r = jwt_verify_hs256_dual(token, strlen(token),
+                                  "NEW", 3, "OLD", 3,
+                                  (long long)time(NULL), back, sizeof(back));
+    TEST_ASSERT_EQUAL_INT(0, r);
+}
+
+static void test_jwt_verify_dual_neither_matches(void) {
+    char token[2048];
+    make_jwt("OTHER", 60, token, sizeof(token));
+    char back[256];
+    int r = jwt_verify_hs256_dual(token, strlen(token),
+                                  "NEW", 3, "OLD", 3,
+                                  (long long)time(NULL), back, sizeof(back));
+    TEST_ASSERT_NOT_EQUAL(0, r);
+}
+
+static void test_jwt_verify_dual_primary_off(void) {
+    /* primary empty, secondary present — only secondary is tried. */
+    char token[2048];
+    make_jwt("NEW", 60, token, sizeof(token));
+    char back[256];
+    int r = jwt_verify_hs256_dual(token, strlen(token),
+                                  NULL, 0, "NEW", 3,
+                                  (long long)time(NULL), back, sizeof(back));
+    TEST_ASSERT_EQUAL_INT(0, r);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_positive_long_accepts_simple);
@@ -394,5 +447,9 @@ int main(void) {
     RUN_TEST(test_check_api_key_dual_secondary_match);
     RUN_TEST(test_check_api_key_dual_neither_matches);
     RUN_TEST(test_check_api_key_dual_only_secondary_set);
+    RUN_TEST(test_jwt_verify_dual_primary_match);
+    RUN_TEST(test_jwt_verify_dual_secondary_match);
+    RUN_TEST(test_jwt_verify_dual_neither_matches);
+    RUN_TEST(test_jwt_verify_dual_primary_off);
     return UNITY_END();
 }

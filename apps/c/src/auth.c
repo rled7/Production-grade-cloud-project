@@ -302,3 +302,23 @@ bool roles_contains_any(const char *roles_json, size_t roles_len, const char **w
     }
     return false;
 }
+
+int jwt_verify_hs256_dual(const char *token, size_t token_len,
+                          const char *secret, size_t secret_len,
+                          const char *secret_next, size_t secret_next_len,
+                          long long current_time_unix,
+                          char *payload_out, size_t payload_cap) {
+    if (secret && secret_len > 0) {
+        if (jwt_verify_hs256(token, token_len, secret, secret_len,
+                             current_time_unix, payload_out, payload_cap) == 0) {
+            return 0;
+        }
+    }
+    if (secret_next && secret_next_len > 0) {
+        if (jwt_verify_hs256(token, token_len, secret_next, secret_next_len,
+                             current_time_unix, payload_out, payload_cap) == 0) {
+            return 0;
+        }
+    }
+    return -1;
+}

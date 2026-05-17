@@ -53,12 +53,14 @@ def create_app(
     api_key: str | None = None,
     api_key_next: str | None = None,
     jwt_secret: str | None = None,
+    jwt_secret_next: str | None = None,
     enable_access_log: bool = False,
 ) -> FastAPI:
     cfg = config or load_config()
     effective_api_key = api_key if api_key is not None else cfg.api_key
     effective_api_key_next = api_key_next if api_key_next is not None else cfg.api_key_next
     effective_jwt_secret = jwt_secret if jwt_secret is not None else cfg.jwt_secret
+    effective_jwt_secret_next = jwt_secret_next if jwt_secret_next is not None else cfg.jwt_secret_next
     cookie_secure = cfg.cookie_secure
 
     database = db if db is not None else Database(cfg.dsn)
@@ -111,26 +113,31 @@ def create_app(
             return await call_next(request)
 
     # --------- JWT session extraction ---------
+    # Auth is disabled only when BOTH secrets are empty.
+    auth_active = bool(effective_jwt_secret or effective_jwt_secret_next)
+
     @app.middleware("http")
     async def _populate_user(request: Request, call_next):
         request.state.user = None
-        if effective_jwt_secret:
+        if auth_active:
             token = request.cookies.get(auth_helpers.COOKIE_NAME)
             if token:
-                claims = auth_helpers.verify_session(token, effective_jwt_secret)
+                claims = auth_helpers.verify_session(
+                    token, effective_jwt_secret, effective_jwt_secret_next
+                )
                 if claims:
                     request.state.user = claims
         return await call_next(request)
 
     def require_auth(request: Request) -> JSONResponse | None:
-        if not effective_jwt_secret:
+        if not auth_active:
             return None
         if not request.state.user:
             return _json(401, {"error": "authentication required"})
         return None
 
     def require_role(request: Request, *roles: str) -> JSONResponse | None:
-        if not effective_jwt_secret:
+        if not auth_active:
             return None
         if not request.state.user:
             return _json(401, {"error": "authentication required"})

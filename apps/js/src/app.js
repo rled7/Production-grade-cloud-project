@@ -69,6 +69,7 @@ function createApp(deps) {
     apiKey = process.env.API_KEY || '',
     apiKeyNext = process.env.API_KEY_NEXT || '',
     jwtSecret = process.env.JWT_SECRET || '',
+    jwtSecretNext = process.env.JWT_SECRET_NEXT || '',
     cookieSecure = (process.env.COOKIE_SECURE || 'true').toLowerCase() !== 'false',
     accessLog,
   } = deps;
@@ -106,26 +107,31 @@ function createApp(deps) {
   }
 
   // ----- JWT verification middleware: populates req.user when valid -----
-  if (jwtSecret) {
+  if (jwtSecret || jwtSecretNext) {
     app.use((req, _res, next) => {
       const token = auth.extractToken(req);
       if (token) {
-        const claims = auth.verifySession(token, jwtSecret);
+        const claims = auth.verifySession(token, jwtSecret, jwtSecretNext);
         if (claims) req.user = claims;
       }
       next();
     });
   }
 
+  // Auth is disabled only when BOTH secrets are empty — during rotation
+  // operators set jwtSecret_next while jwtSecret stays the live value, but
+  // it's also valid to clear jwtSecret and rely solely on jwtSecret_next.
+  const authActive = Boolean(jwtSecret || jwtSecretNext);
+
   function requireAuth(req, res, next) {
-    if (!jwtSecret) return next(); // disabled (tests)
+    if (!authActive) return next(); // disabled (tests)
     if (!req.user) return jsonError(res, 401, 'authentication required');
     next();
   }
 
   function requireRole(...roles) {
     return (req, res, next) => {
-      if (!jwtSecret) return next();
+      if (!authActive) return next();
       if (!req.user) return jsonError(res, 401, 'authentication required');
       if (!auth.hasRole(req.user, ...roles)) return jsonError(res, 403, 'forbidden');
       next();

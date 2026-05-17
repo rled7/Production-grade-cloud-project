@@ -567,9 +567,11 @@ static void parse_user_from_payload(const char *payload, current_user_t *u) {
 }
 
 static bool extract_current_user(struct mg_http_message *hm, const char *secret,
-                                 current_user_t *u) {
+                                 const char *secret_next, current_user_t *u) {
     memset(u, 0, sizeof(*u));
-    if (!secret || !*secret)
+    bool primary_off = (!secret || !*secret);
+    bool secondary_off = (!secret_next || !*secret_next);
+    if (primary_off && secondary_off)
         return false;
     struct mg_str *ch = mg_http_get_header(hm, "Cookie");
     if (!ch || ch->len == 0)
@@ -579,8 +581,12 @@ static bool extract_current_user(struct mg_http_message *hm, const char *secret,
     if (tn < 0)
         return false;
     char payload[1024];
-    if (jwt_verify_hs256(token, (size_t)tn, secret, strlen(secret), (long long)time(NULL), payload,
-                         sizeof(payload)) != 0) {
+    if (jwt_verify_hs256_dual(token, (size_t)tn,
+                              primary_off ? NULL : secret,
+                              primary_off ? 0 : strlen(secret),
+                              secondary_off ? NULL : secret_next,
+                              secondary_off ? 0 : strlen(secret_next),
+                              (long long)time(NULL), payload, sizeof(payload)) != 0) {
         return false;
     }
     parse_user_from_payload(payload, u);
@@ -789,11 +795,13 @@ void handle_request(struct mg_connection *c, struct mg_http_message *hm, app_ctx
         return;
     }
 
-    /* All remaining /api/<lang>/* routes require a valid JWT session
-     * (when jwt_secret is configured). */
+    /* All remaining /api/<lang>/* routes require a valid JWT session.
+     * Auth is enabled when EITHER jwt_secret or jwt_secret_next is set. */
     current_user_t cur;
-    bool jwt_enabled = app->jwt_secret && *app->jwt_secret;
-    bool have_user = jwt_enabled ? extract_current_user(hm, app->jwt_secret, &cur) : false;
+    bool jwt_enabled = (app->jwt_secret && *app->jwt_secret) ||
+                       (app->jwt_secret_next && *app->jwt_secret_next);
+    bool have_user = jwt_enabled ?
+        extract_current_user(hm, app->jwt_secret, app->jwt_secret_next, &cur) : false;
     if (jwt_enabled && !have_user) {
         reply_error(c, 401, "authentication required");
         return;

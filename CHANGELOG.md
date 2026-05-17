@@ -3,6 +3,47 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.9.0] - 2026-05-17
+
+### Added — Admin seeding, JWT rotation, bootstrap helper, DEPLOYMENT.md
+
+Pre-deploy hardening across three independent threads:
+
+- **Admin user seeding (item #1 of the pre-deploy audit):** new
+  `admin_email` / `admin_password` Terraform variables stored in the
+  existing app-secrets Secrets Manager entry and injected into the
+  migrator task. New `db/entrypoint.sh` runs `migrate.sh up` then UPSERTs
+  the admin user when both env vars are set. Migrator Dockerfile points
+  at the new entrypoint. Idempotent — re-deploys rotate the admin
+  password to whatever Secrets Manager currently holds.
+- **JWT secret rotation (item #5):** new `jwt_secret_next` variable
+  propagated through all four apps. Each language's `verify_session`
+  function (JS `verifySession`, Python `verify_session`, C
+  `jwt_verify_hs256_dual`, C++ `jwt_verify_hs256_dual`) tries the
+  primary first, falls back to the next. Auth is "active" when EITHER
+  secret is non-empty. Same four-step rotation pattern as the API key.
+  17 new tests (4 per language + 1 in C++).
+- **ECR bootstrap (item #2):** new
+  `terraform/scripts/bootstrap-deploy.sh` resolves the
+  IMMUTABLE-ECR chicken-and-egg: targeted apply of only the ECR repos →
+  docker build/push initial `:bootstrap` and `:<sha>` images for every
+  service + migrator → full apply with `image_tag=bootstrap` so services
+  start with a real image. CI takes over on the next push to main.
+- **DEPLOYMENT.md (items #4 + #6):** dedicated pre-deploy guide. Covers
+  the AWS account / repo / GitHub Actions checklist, the cost
+  break-down per environment (~$170/mo prod, ~$135/mo staging — NAT is
+  the biggest line), commands for running Trivy and `terraform plan`
+  locally to catch surprises CI hasn't seen yet, a smoke-test recipe
+  for after the first deploy, and the list of deferred items
+  (CloudFront, app metrics, more alarms, DR runbook, container hardening).
+
+Test totals (before -> after):
+- JS:     73 -> 77
+- Python: 70 -> 74
+- C:      44 -> 48
+- C++:    47 -> 52
+- Total: 234 -> 251
+
 ## [1.8.0] - 2026-05-17
 
 ### Added — Language linters in CI (eslint, ruff, clang-format)
