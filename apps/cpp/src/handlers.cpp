@@ -1,0 +1,388 @@
+#include "handlers.hpp"
+
+#include <cctype>
+#include <cstdio>
+#include <ctime>
+#include <iostream>
+#include <limits>
+#include <sstream>
+
+#include "auth.hpp"
+#include "crow_all.h"
+
+namespace app {
+
+// ---------- Pure helpers ----------
+
+bool parse_positive_long(std::string_view s, long long &out) {
+    if (s.empty())
+        return false;
+    if (s.size() > 1 && s[0] == '0')
+        return false; // no leading zeros
+    long long v = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9')
+            return false;
+        int d = c - '0';
+        if (v > (std::numeric_limits<long long>::max() - d) / 10)
+            return false;
+        v = v * 10 + d;
+    }
+    if (v <= 0)
+        return false;
+    out = v;
+    return true;
+}
+
+bool validate_content_nonempty(const std::string &s) {
+    return !s.empty();
+}
+
+AuthStatus check_api_key(const std::string &presented, const std::string &expected) {
+    if (expected.empty())
+        return AuthStatus::Disabled;
+    if (presented.empty())
+        return AuthStatus::Missing;
+    if (presented.size() != expected.size())
+        return AuthStatus::Invalid;
+    // constant-time compare
+    unsigned char diff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        diff |= static_cast<unsigned char>(presented[i]) ^ static_cast<unsigned char>(expected[i]);
+    }
+    return diff == 0 ? AuthStatus::Ok : AuthStatus::Invalid;
+}
+
+AuthStatus check_api_key_dual(const std::string &presented, const std::string &expected,
+                              const std::string &expected_next) {
+    const bool primary_off = expected.empty();
+    const bool secondary_off = expected_next.empty();
+    if (primary_off && secondary_off)
+        return AuthStatus::Disabled;
+    if (presented.empty())
+        return AuthStatus::Missing;
+    if (!primary_off && check_api_key(presented, expected) == AuthStatus::Ok)
+        return AuthStatus::Ok;
+    if (!secondary_off && check_api_key(presented, expected_next) == AuthStatus::Ok)
+        return AuthStatus::Ok;
+    return AuthStatus::Invalid;
+}
+
+std::string json_escape(std::string_view in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (unsigned char c : in) {
+        switch (c) {
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else {
+                out += static_cast<char>(c);
+            }
+        }
+    }
+    return out;
+}
+
+std::string json_quote(std::string_view in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    out += '"';
+    out += json_escape(in);
+    out += '"';
+    return out;
+}
+
+std::string serialize_item(const DataItem &item) {
+    std::string out;
+    out += "{\"id\":";
+    out += std::to_string(item.id);
+    out += ",\"content\":";
+    out += json_quote(item.content);
+    out += ",\"created_at\":";
+    out += json_quote(item.created_at_iso);
+    out += "}";
+    return out;
+}
+
+std::string serialize_items(const std::vector<DataItem> &items) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (i > 0)
+            out += ',';
+        out += serialize_item(items[i]);
+    }
+    out += "]";
+    return out;
+}
+
+// ---------- Helpers for handlers ----------
+
+namespace {
+
+HandlerResult error_response(int code, std::string_view msg) {
+    std::string body = "{\"error\":" + json_quote(msg) + "}";
+    return {code, std::move(body)};
+}
+
+} // namespace
+
+// ---------- Handlers ----------
+
+HandlerResult handle_health(const AppDeps &deps) {
+    std::string body = "{\"status\":\"ok\",\"lang\":" + json_quote(deps.app_lang) + "}";
+    return {200, std::move(body)};
+}
+
+HandlerResult handle_list(AppDeps &deps) {
+    const std::string key = cache_key_all();
+
+    if (deps.cache) {
+        auto r = deps.cache->get(key);
+        if (should_serve_from_cache(r.status)) {
+            std::string body = "{\"source\":\"cache\",\"items\":" + r.value + "}";
+            return {200, std::move(body)};
+        }
+        // Miss or Error → fall through to DB. Error is logged inside Cache.
+    }
+
+    try {
+        auto rows = deps.db->list_all();
+        std::string items_json = serialize_items(rows);
+        if (deps.cache)
+            deps.cache->set(key, items_json);
+        std::string body = "{\"source\":\"db\",\"items\":" + items_json + "}";
+        return {200, std::move(body)};
+    } catch (const DatabaseUnavailable &e) {
+        std::cerr << "[db] unavailable: " << e.what() << "\n";
+        return error_response(503, "database unavailable");
+    } catch (const std::exception &e) {
+        std::cerr << "[db] error: " << e.what() << "\n";
+        return error_response(500, "internal");
+    }
+}
+
+HandlerResult handle_get_one(AppDeps &deps, std::string_view id_str) {
+    long long id = 0;
+    if (!parse_positive_long(id_str, id)) {
+        return error_response(400, "invalid id");
+    }
+
+    const std::string key = cache_key_item(id);
+
+    if (deps.cache) {
+        auto r = deps.cache->get(key);
+        if (should_serve_from_cache(r.status)) {
+            std::string body = "{\"source\":\"cache\",\"item\":" + r.value + "}";
+            return {200, std::move(body)};
+        }
+    }
+
+    try {
+        auto opt = deps.db->get_by_id(id);
+        if (!opt)
+            return error_response(404, "not found");
+        std::string item_json = serialize_item(*opt);
+        if (deps.cache)
+            deps.cache->set(key, item_json);
+        std::string body = "{\"source\":\"db\",\"item\":" + item_json + "}";
+        return {200, std::move(body)};
+    } catch (const DatabaseUnavailable &e) {
+        std::cerr << "[db] unavailable: " << e.what() << "\n";
+        return error_response(503, "database unavailable");
+    } catch (const std::exception &e) {
+        std::cerr << "[db] error: " << e.what() << "\n";
+        return error_response(500, "internal");
+    }
+}
+
+HandlerResult handle_create(AppDeps &deps, const std::string &body_str) {
+    if (body_str.size() > deps.max_body_bytes) {
+        return error_response(413, "payload too large");
+    }
+
+    auto json = crow::json::load(body_str);
+    if (!json) {
+        return error_response(400, "malformed json");
+    }
+    if (!json.has("content") || json["content"].t() != crow::json::type::String) {
+        return error_response(400, "content is required and must be a non-empty string");
+    }
+    std::string content = json["content"].s();
+    if (!validate_content_nonempty(content)) {
+        return error_response(400, "content is required and must be a non-empty string");
+    }
+
+    try {
+        auto item = deps.db->insert(content);
+        if (deps.cache)
+            deps.cache->del(cache_key_all());
+        std::string body = "{\"item\":" + serialize_item(item) + "}";
+        return {201, std::move(body)};
+    } catch (const DatabaseUnavailable &e) {
+        std::cerr << "[db] unavailable: " << e.what() << "\n";
+        return error_response(503, "database unavailable");
+    } catch (const std::exception &e) {
+        std::cerr << "[db] error: " << e.what() << "\n";
+        return error_response(500, "internal");
+    }
+}
+
+// ---------- Auth handlers ----------
+
+LoginResult handle_login(AppDeps &deps, const std::string &body_str) {
+    LoginResult r;
+    if (body_str.size() > deps.max_body_bytes) {
+        r.status = 413;
+        r.body = R"({"error":"payload too large"})";
+        return r;
+    }
+    auto json = crow::json::load(body_str);
+    if (!json) {
+        r.status = 400;
+        r.body = R"({"error":"malformed json"})";
+        return r;
+    }
+    if (!json.has("email") || !json.has("password") ||
+        json["email"].t() != crow::json::type::String ||
+        json["password"].t() != crow::json::type::String) {
+        r.status = 400;
+        r.body = R"({"error":"email and password are required"})";
+        return r;
+    }
+    std::string email = json["email"].s();
+    std::string password = json["password"].s();
+    if (email.empty() || password.empty()) {
+        r.status = 400;
+        r.body = R"({"error":"email and password are required"})";
+        return r;
+    }
+
+    std::optional<Database::UserRow> user;
+    try {
+        user = deps.db->find_user_by_email(email);
+    } catch (const DatabaseUnavailable &) {
+        r.status = 503;
+        r.body = R"({"error":"database unavailable"})";
+        return r;
+    }
+    if (!user) {
+        r.status = 401;
+        r.body = R"({"error":"invalid credentials"})";
+        return r;
+    }
+    if (!bcrypt_verify(password, user->password_hash)) {
+        r.status = 401;
+        r.body = R"({"error":"invalid credentials"})";
+        return r;
+    }
+    if (deps.jwt_secret.empty()) {
+        r.status = 500;
+        r.body = R"({"error":"auth not configured"})";
+        return r;
+    }
+
+    long long now = static_cast<long long>(std::time(nullptr));
+    const std::string &roles = user->roles_json.empty() ? std::string("[]") : user->roles_json;
+    std::string payload = "{\"sub\":\"" + std::to_string(user->id) +
+                          "\","
+                          "\"email\":" +
+                          json_quote(user->email) +
+                          ","
+                          "\"roles\":" +
+                          roles +
+                          ","
+                          "\"iat\":" +
+                          std::to_string(now) +
+                          ","
+                          "\"exp\":" +
+                          std::to_string(now + 3600) + "}";
+    std::string token = jwt_sign_hs256(payload, deps.jwt_secret);
+    if (token.empty()) {
+        r.status = 500;
+        r.body = R"({"error":"internal"})";
+        return r;
+    }
+
+    r.status = 200;
+    r.body = "{\"user\":{\"id\":" + std::to_string(user->id) +
+             ",\"email\":" + json_quote(user->email) + ",\"roles\":" + roles + "}}";
+    r.set_cookie = "session=" + token + "; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600";
+    if (deps.cookie_secure)
+        r.set_cookie += "; Secure";
+    return r;
+}
+
+CurrentUser parse_user_payload(const std::string &payload) {
+    CurrentUser u;
+    auto sub_pos = payload.find("\"sub\"");
+    if (sub_pos != std::string::npos) {
+        auto colon = payload.find(':', sub_pos);
+        if (colon != std::string::npos) {
+            auto open = payload.find('"', colon);
+            if (open != std::string::npos) {
+                auto close = payload.find('"', open + 1);
+                if (close != std::string::npos) {
+                    try {
+                        u.id = std::stoll(payload.substr(open + 1, close - open - 1));
+                    } catch (...) {
+                        u.id = 0;
+                    }
+                }
+            }
+        }
+    }
+    auto em_pos = payload.find("\"email\"");
+    if (em_pos != std::string::npos) {
+        auto colon = payload.find(':', em_pos);
+        if (colon != std::string::npos) {
+            auto open = payload.find('"', colon);
+            if (open != std::string::npos) {
+                auto close = payload.find('"', open + 1);
+                if (close != std::string::npos)
+                    u.email = payload.substr(open + 1, close - open - 1);
+            }
+        }
+    }
+    auto rl_pos = payload.find("\"roles\"");
+    if (rl_pos != std::string::npos) {
+        auto colon = payload.find(':', rl_pos);
+        auto open = payload.find('[', colon);
+        auto close = payload.find(']', open);
+        if (open != std::string::npos && close != std::string::npos)
+            u.roles_json = payload.substr(open, close - open + 1);
+    }
+    return u;
+}
+
+HandlerResult handle_me(const CurrentUser &user) {
+    const std::string &roles = user.roles_json.empty() ? std::string("[]") : user.roles_json;
+    std::string body = "{\"user\":{\"id\":" + std::to_string(user.id) +
+                       ",\"email\":" + json_quote(user.email) + ",\"roles\":" + roles + "}}";
+    return {200, std::move(body)};
+}
+
+} // namespace app

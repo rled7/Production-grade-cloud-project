@@ -1,0 +1,32 @@
+# Copy to terraform.tfvars and fill in real values. terraform.tfvars is gitignored.
+
+project_name = "ml-ecs-benchmark-staging"
+aws_region   = "us-east-1"
+
+# Public-facing endpoint for staging. Should differ from prod.
+domain_name     = "staging-api.example.com"
+route53_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# Database
+db_name     = "appdb"
+db_username = "appuser"
+db_password = "CHANGE-ME-USE-A-STRONG-PASSWORD"
+
+# Generate with: openssl rand -hex 32
+api_key = "CHANGE-ME-USE-A-STRONG-API-KEY"
+
+# Optional second API key during rotation (leave empty when not rotating).
+api_key_next = ""
+
+# Generate with: openssl rand -hex 64
+jwt_secret = "CHANGE-ME-USE-A-LONG-RANDOM-SECRET-NO-LESS-THAN-32-BYTES"
+
+# Sizing overrides (defaults are already staging-appropriate):
+# db_instance_class = "db.t3.micro"
+# db_multi_az       = false
+# redis_node_type   = "cache.t3.micro"
+# desired_count     = 1
+# task_cpu          = "256"
+# task_memory       = "512"
+# image_tag         = "latest"
+# waf_rate_limit    = 1000

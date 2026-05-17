@@ -1,0 +1,47 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+crash.log
+terraform.tfvars
+!terraform.tfvars.example
+
+# Node.js (JS app)
+**/node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python (Python app)
+**/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# C / C++
+**/build/
+*.o
+*.a
+*.so
+apps/c/server
+apps/c/test_handlers
+apps/cpp/build/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Local env
+.env
+.env.local
+*.local
+apps/*/access.log
+apps/*/access.log.*

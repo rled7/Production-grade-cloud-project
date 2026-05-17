@@ -1,0 +1,186 @@
+# Local development stack: all four language services + Postgres + Redis.
+# Mirrors production: same env vars, same /api/<lang> routing.
+#
+# Usage:
+#   docker compose up --build
+#   curl http://localhost:8081/health   # JS
+#   curl http://localhost:8082/health   # Python
+#   curl http://localhost:8083/health   # C
+#   curl http://localhost:8084/health   # C++
+#   curl -X POST http://localhost:8081/api/js/data \
+#        -H 'content-type: application/json' -d '{"content":"hello"}'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply pending migrations and seed an admin user, then exit.
+  # Every app depends_on: migrate so it cannot start until the schema is ready.
+  # ADMIN_EMAIL / ADMIN_PASSWORD seed a single admin user on every up. Override
+  # in .env (or `ADMIN_PASSWORD=... docker compose up`) for any non-throwaway
+  # environment — the defaults below are intentionally insecure dev values.
+  migrate:
+    image: python:3.12-slim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./db:/db:ro
+    working_dir: /db
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: appuser
+      PGPASSWORD: apppass
+      PGDATABASE: appdb
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-supersecret}
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -e
+        apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null
+        pip install -q bcrypt
+        /db/migrate.sh up
+        if [ "$$ADMIN_PASSWORD" = "supersecret" ]; then
+          echo "[migrate] WARN: using default admin password. Set ADMIN_PASSWORD before any non-throwaway use." >&2
+        fi
+        /db/migrate.sh seed-admin --email "$$ADMIN_EMAIL" --password "$$ADMIN_PASSWORD"
+
+  js:
+    build: ./apps/js
+    environment:
+      PORT: "8080"
+      APP_LANG: "js"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+      API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
+    ports:
+      - "8081:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  python:
+    build: ./apps/python
+    environment:
+      PORT: "8080"
+      APP_LANG: "python"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+      API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
+    ports:
+      - "8082:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  c:
+    build: ./apps/c
+    environment:
+      PORT: "8080"
+      APP_LANG: "c"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+      API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
+    ports:
+      - "8083:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  cpp:
+    build: ./apps/cpp
+    environment:
+      PORT: "8080"
+      APP_LANG: "cpp"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: appuser
+      DB_PASSWORD: apppass
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL_SECONDS: "30"
+      REDIS_TIMEOUT_MS: "200"
+      MAX_BODY_BYTES: "1048576"
+      API_KEY: "local-dev-key"
+      JWT_SECRET: "local-dev-jwt-secret-change-in-prod"
+      COOKIE_SECURE: "false"
+    ports:
+      - "8084:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
