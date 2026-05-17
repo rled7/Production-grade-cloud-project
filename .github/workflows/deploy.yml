@@ -191,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Trivy filesystem (dependencies)
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -200,7 +200,7 @@ jobs:
           ignore-unfixed: true
           format: table
       - name: Trivy IaC (Terraform)
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: terraform/
@@ -240,7 +240,7 @@ jobs:
           docker build -t "$REPO:${{ github.sha }}" ./apps/${{ matrix.lang }}
           echo "REPO=$REPO" >> $GITHUB_ENV
       - name: Trivy scan built image
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REPO }}:${{ github.sha }}
           severity: CRITICAL,HIGH
