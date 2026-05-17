@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import bcrypt
 from fastapi import FastAPI, Request
@@ -18,7 +18,7 @@ from .db import Database, DatabaseUnavailable
 logger = logging.getLogger(__name__)
 
 
-def parse_positive_int(raw: str) -> Optional[int]:
+def parse_positive_int(raw: str) -> int | None:
     if raw is None:
         return None
     s = str(raw).strip()
@@ -33,7 +33,7 @@ def parse_positive_int(raw: str) -> Optional[int]:
     return val
 
 
-def validate_content(body: Any) -> Optional[str]:
+def validate_content(body: Any) -> str | None:
     if not isinstance(body, dict):
         return None
     content = body.get("content")
@@ -47,12 +47,12 @@ def _json(status: int, payload: Any) -> JSONResponse:
 
 
 def create_app(
-    db: Optional[Any] = None,
-    cache: Optional[Any] = None,
-    config: Optional[Config] = None,
-    api_key: Optional[str] = None,
-    api_key_next: Optional[str] = None,
-    jwt_secret: Optional[str] = None,
+    db: Any | None = None,
+    cache: Any | None = None,
+    config: Config | None = None,
+    api_key: str | None = None,
+    api_key_next: str | None = None,
+    jwt_secret: str | None = None,
     enable_access_log: bool = False,
 ) -> FastAPI:
     cfg = config or load_config()
@@ -122,14 +122,14 @@ def create_app(
                     request.state.user = claims
         return await call_next(request)
 
-    def require_auth(request: Request) -> Optional[JSONResponse]:
+    def require_auth(request: Request) -> JSONResponse | None:
         if not effective_jwt_secret:
             return None
         if not request.state.user:
             return _json(401, {"error": "authentication required"})
         return None
 
-    def require_role(request: Request, *roles: str) -> Optional[JSONResponse]:
+    def require_role(request: Request, *roles: str) -> JSONResponse | None:
         if not effective_jwt_secret:
             return None
         if not request.state.user:

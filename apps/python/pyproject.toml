@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["tests/vendor", ".venv"]
+
+[tool.ruff.lint]
+# Default selections plus a couple of safety nets. Keep this conservative —
+# the project is a benchmark reference, not a style showcase.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (undefined names, unused imports)
+    "W",   # pycodestyle warnings
+    "I",   # import sorting
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line-too-long — we set line-length but don't enforce
+    "B008",  # do not perform function calls in argument defaults — FastAPI idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "F401"]  # late imports / unused (fixtures) ok in tests

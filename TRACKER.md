@@ -124,3 +124,10 @@ Timestamps are UTC, recorded at phase completion.
 - [x] C++: App<AccessLogMiddleware> + before/after_handle + thread_local user id - 2026-05-17 01:00 UTC
 - [x] terraform/environments/staging/ with smaller defaults + isolated state key - 2026-05-17 01:00 UTC
 - [x] README "Environments" section - 2026-05-17 01:00 UTC
+
+## Post-1.0: ECR immutability + linters in CI (1.7.0 + 1.8.0)
+- [x] ECR repos image_tag_mutability = IMMUTABLE; ECS ignore_changes on task_definition - 2026-05-17 02:00 UTC
+- [x] CI build-and-push: SHA-only (no :latest); deploy: describe -> patch -> register -> update-service - 2026-05-17 02:00 UTC
+- [x] eslint + ruff + clang-format configs - 2026-05-17 03:00 UTC
+- [x] Repo-wide clang-format reformat baseline - 2026-05-17 03:00 UTC
+- [x] CI `lint` matrix job gating security-fs-scan - 2026-05-17 03:00 UTC

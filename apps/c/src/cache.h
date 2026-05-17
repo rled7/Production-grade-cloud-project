@@ -10,10 +10,10 @@
  */
 
 typedef enum {
-    CACHE_OK = 0,           /* Operation succeeded, value available */
-    CACHE_MISS = 1,         /* Key did not exist */
-    CACHE_UNAVAILABLE = 2,  /* Redis down / timed out / error */
-    CACHE_DISABLED = 3      /* Caller chose not to use cache (init failed) */
+    CACHE_OK = 0,          /* Operation succeeded, value available */
+    CACHE_MISS = 1,        /* Key did not exist */
+    CACHE_UNAVAILABLE = 2, /* Redis down / timed out / error */
+    CACHE_DISABLED = 3     /* Caller chose not to use cache (init failed) */
 } cache_status_t;
 
 typedef struct cache_ctx cache_ctx_t;
@@ -31,8 +31,7 @@ int build_all_key(char *buf, size_t buflen);
 /* Create/connect a cache context. Returns NULL on failure (caller should
  * continue without cache). host may be NULL/empty to disable.
  * When tls is true the connection is wrapped in TLS via hiredis_ssl. */
-cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms,
-                           bool tls);
+cache_ctx_t *cache_connect(const char *host, int port, int timeout_ms, bool tls);
 
 /* Free a cache context. */
 void cache_free(cache_ctx_t *ctx);
@@ -41,8 +40,7 @@ void cache_free(cache_ctx_t *ctx);
 cache_status_t cache_get(cache_ctx_t *ctx, const char *key, char **out);
 
 /* SETEX key ttl value. */
-cache_status_t cache_set(cache_ctx_t *ctx, const char *key,
-                         const char *value, int ttl_seconds);
+cache_status_t cache_set(cache_ctx_t *ctx, const char *key, const char *value, int ttl_seconds);
 
 /* DEL key. */
 cache_status_t cache_del(cache_ctx_t *ctx, const char *key);

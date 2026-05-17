@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 import jwt
 
@@ -18,7 +18,7 @@ def sign_session(claims: dict[str, Any], secret: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-def verify_session(token: str, secret: str) -> Optional[dict[str, Any]]:
+def verify_session(token: str, secret: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, secret, algorithms=["HS256"])
     except jwt.PyJWTError:

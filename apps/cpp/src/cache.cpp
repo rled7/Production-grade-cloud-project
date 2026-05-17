@@ -12,7 +12,7 @@ namespace app {
 
 namespace {
 
-void log_warn(const std::string& msg) {
+void log_warn(const std::string &msg) {
     std::cerr << "[cache] WARN " << msg << std::endl;
 }
 
@@ -21,20 +21,15 @@ void init_openssl_once() {
     std::call_once(g_ssl_init_once, []() { redisInitOpenSSL(); });
 }
 
-}  // namespace
+} // namespace
 
-Cache::Cache(std::string host, int port, int timeout_ms, int ttl_seconds,
-             bool tls)
-    : host_(std::move(host)),
-      port_(port),
-      timeout_ms_(timeout_ms),
-      ttl_seconds_(ttl_seconds),
+Cache::Cache(std::string host, int port, int timeout_ms, int ttl_seconds, bool tls)
+    : host_(std::move(host)), port_(port), timeout_ms_(timeout_ms), ttl_seconds_(ttl_seconds),
       tls_(tls) {
     if (tls_) {
         init_openssl_once();
         redisSSLContextError err = REDIS_SSL_CTX_NONE;
-        ssl_ctx_ = redisCreateSSLContext(nullptr, nullptr, nullptr, nullptr,
-                                         host_.c_str(), &err);
+        ssl_ctx_ = redisCreateSSLContext(nullptr, nullptr, nullptr, nullptr, host_.c_str(), &err);
         if (!ssl_ctx_) {
             log_warn("redisCreateSSLContext failed");
         }
@@ -59,7 +54,7 @@ void Cache::reset_ctx() {
     }
 }
 
-redisContext* Cache::ensure_ctx() {
+redisContext *Cache::ensure_ctx() {
     if (ctx_ != nullptr && ctx_->err == 0) {
         return ctx_;
     }
@@ -69,7 +64,7 @@ redisContext* Cache::ensure_ctx() {
     tv.tv_sec = timeout_ms_ / 1000;
     tv.tv_usec = (timeout_ms_ % 1000) * 1000;
 
-    redisContext* c = redisConnectWithTimeout(host_.c_str(), port_, tv);
+    redisContext *c = redisConnectWithTimeout(host_.c_str(), port_, tv);
     if (c == nullptr) {
         log_warn("redisConnectWithTimeout returned NULL");
         return nullptr;
@@ -95,19 +90,18 @@ redisContext* Cache::ensure_ctx() {
     return ctx_;
 }
 
-CacheGetResult Cache::get(const std::string& key) {
+CacheGetResult Cache::get(const std::string &key) {
     std::lock_guard<std::mutex> lock(mutex_);
     CacheGetResult res{CacheStatus::Error, {}};
     try {
-        redisContext* c = ensure_ctx();
+        redisContext *c = ensure_ctx();
         if (c == nullptr) {
             return res;
         }
-        redisReply* reply = static_cast<redisReply*>(
-            redisCommand(c, "GET %b", key.data(), key.size()));
+        redisReply *reply =
+            static_cast<redisReply *>(redisCommand(c, "GET %b", key.data(), key.size()));
         if (reply == nullptr) {
-            log_warn(std::string("GET reply NULL: ") +
-                     (c->errstr[0] ? c->errstr : "unknown"));
+            log_warn(std::string("GET reply NULL: ") + (c->errstr[0] ? c->errstr : "unknown"));
             reset_ctx();
             return res;
         }
@@ -130,7 +124,7 @@ CacheGetResult Cache::get(const std::string& key) {
         // Unexpected type
         freeReplyObject(reply);
         return res;
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         log_warn(std::string("get exception: ") + e.what());
         reset_ctx();
         return res;
@@ -141,17 +135,17 @@ CacheGetResult Cache::get(const std::string& key) {
     }
 }
 
-void Cache::set(const std::string& key, const std::string& value) {
+void Cache::set(const std::string &key, const std::string &value) {
     std::lock_guard<std::mutex> lock(mutex_);
     try {
-        redisContext* c = ensure_ctx();
-        if (c == nullptr) return;
-        redisReply* reply = static_cast<redisReply*>(redisCommand(
-            c, "SET %b %b EX %d", key.data(), key.size(), value.data(),
-            value.size(), ttl_seconds_));
+        redisContext *c = ensure_ctx();
+        if (c == nullptr)
+            return;
+        redisReply *reply =
+            static_cast<redisReply *>(redisCommand(c, "SET %b %b EX %d", key.data(), key.size(),
+                                                   value.data(), value.size(), ttl_seconds_));
         if (reply == nullptr) {
-            log_warn(std::string("SET reply NULL: ") +
-                     (c->errstr[0] ? c->errstr : "unknown"));
+            log_warn(std::string("SET reply NULL: ") + (c->errstr[0] ? c->errstr : "unknown"));
             reset_ctx();
             return;
         }
@@ -159,7 +153,7 @@ void Cache::set(const std::string& key, const std::string& value) {
             log_warn(std::string("SET error: ") + (reply->str ? reply->str : ""));
         }
         freeReplyObject(reply);
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         log_warn(std::string("set exception: ") + e.what());
         reset_ctx();
     } catch (...) {
@@ -168,16 +162,16 @@ void Cache::set(const std::string& key, const std::string& value) {
     }
 }
 
-void Cache::del(const std::string& key) {
+void Cache::del(const std::string &key) {
     std::lock_guard<std::mutex> lock(mutex_);
     try {
-        redisContext* c = ensure_ctx();
-        if (c == nullptr) return;
-        redisReply* reply = static_cast<redisReply*>(
-            redisCommand(c, "DEL %b", key.data(), key.size()));
+        redisContext *c = ensure_ctx();
+        if (c == nullptr)
+            return;
+        redisReply *reply =
+            static_cast<redisReply *>(redisCommand(c, "DEL %b", key.data(), key.size()));
         if (reply == nullptr) {
-            log_warn(std::string("DEL reply NULL: ") +
-                     (c->errstr[0] ? c->errstr : "unknown"));
+            log_warn(std::string("DEL reply NULL: ") + (c->errstr[0] ? c->errstr : "unknown"));
             reset_ctx();
             return;
         }
@@ -185,7 +179,7 @@ void Cache::del(const std::string& key) {
             log_warn(std::string("DEL error: ") + (reply->str ? reply->str : ""));
         }
         freeReplyObject(reply);
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         log_warn(std::string("del exception: ") + e.what());
         reset_ctx();
     } catch (...) {
@@ -194,4 +188,4 @@ void Cache::del(const std::string& key) {
     }
 }
 
-}  // namespace app
+} // namespace app

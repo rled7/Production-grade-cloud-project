@@ -4,7 +4,6 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { itemKey, ALL_KEY } = require('./cache');
 const auth = require('./auth');
-const { buildAccessLog } = require('./access_log');
 
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 

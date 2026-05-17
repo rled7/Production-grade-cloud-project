@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class DataItem:
     def to_dict(self) -> dict[str, Any]:
         ts = self.created_at
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         return {
             "id": self.id,
             "content": self.content,
@@ -109,7 +109,7 @@ class Database:
             self.close()
             raise DatabaseUnavailable(str(exc)) from exc
 
-    def get_by_id(self, item_id: int) -> Optional[DataItem]:
+    def get_by_id(self, item_id: int) -> DataItem | None:
         try:
             pool = self._ensure_pool()
             with pool.connection() as conn:
@@ -149,7 +149,7 @@ class Database:
             self.close()
             raise DatabaseUnavailable(str(exc)) from exc
 
-    def find_user_by_email(self, email: str) -> Optional[dict]:
+    def find_user_by_email(self, email: str) -> dict | None:
         try:
             pool = self._ensure_pool()
             with pool.connection() as conn:

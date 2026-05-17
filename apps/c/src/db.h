@@ -12,8 +12,8 @@ typedef struct db_ctx db_ctx_t;
 
 typedef struct {
     long id;
-    char *content;     /* malloc'd, must be free()'d via db_row_free */
-    char *created_at;  /* ISO-8601 string, malloc'd */
+    char *content;    /* malloc'd, must be free()'d via db_row_free */
+    char *created_at; /* ISO-8601 string, malloc'd */
 } db_row_t;
 
 typedef struct {
@@ -32,8 +32,8 @@ typedef enum {
 /* Build a connection string and connect. Returns NULL on hard failure
  * (e.g. OOM); a returned ctx may still be in a disconnected state and will
  * reconnect lazily. */
-db_ctx_t *db_connect(const char *host, const char *port, const char *dbname,
-                     const char *user, const char *password);
+db_ctx_t *db_connect(const char *host, const char *port, const char *dbname, const char *user,
+                     const char *password);
 
 void db_free(db_ctx_t *ctx);
 
@@ -53,10 +53,10 @@ db_status_t db_query_one(db_ctx_t *ctx, long id, db_row_t *out);
 db_status_t db_insert(db_ctx_t *ctx, const char *content, db_row_t *out);
 
 typedef struct {
-    long  id;
+    long id;
     char *email;
     char *password_hash;
-    char *roles_json;   /* JSON array literal, e.g. ["writer","admin"] */
+    char *roles_json; /* JSON array literal, e.g. ["writer","admin"] */
 } db_user_t;
 
 /* SELECT id, email, password_hash, roles FROM users WHERE LOWER(email)=LOWER($1).

@@ -5,7 +5,7 @@ import logging
 import logging.handlers
 import os
 import time
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from starlette.requests import Request
 from starlette.responses import Response

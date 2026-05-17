@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.8.0] - 2026-05-17
+
+### Added — Language linters in CI (eslint, ruff, clang-format)
+- `apps/js/.eslintrc.json` (eslint:recommended + no-unused-vars with `_`
+  ignore prefix) and an `npm run lint` script. `eslint` added to devDeps.
+- `apps/python/pyproject.toml` with a conservative `[tool.ruff]` config
+  (E/F/W/I/B/UP rule sets, `line-length=100`); `ruff` added to
+  `requirements-dev.txt`.
+- Repo-root `.clang-format` matching the existing hand-written style
+  (4-space indent, 100-col, attached braces). The whole tree was
+  reformatted in-place so the CI check has a clean baseline; vendored
+  sources (mongoose, crow_all, unity) are excluded by the glob.
+- New `lint` matrix job in `.github/workflows/deploy.yml` running
+  eslint / ruff / clang-format per language. Runs in parallel with the
+  test jobs; `security-fs-scan` now `needs:` lint too, so a lint failure
+  blocks image build/push/deploy.
+- All 234 tests still pass after the reformat + ruff auto-fixes.
+
 ## [1.7.0] - 2026-05-17
 
 ### Changed — ECR IMMUTABLE + SHA-only deploys

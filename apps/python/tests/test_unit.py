@@ -1,13 +1,12 @@
 """Unit tests for pure helpers: validation, id parsing, serialization, cache keys."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from app.cache import cache_key_all, cache_key_item
 from app.config import load_config
 from app.db import DataItem
 from app.main import parse_positive_int, validate_content
-
 
 # ---------- parse_positive_int ----------
 
@@ -89,7 +88,7 @@ def test_cache_key_item():
 # ---------- DataItem serialization ----------
 
 def test_dataitem_to_dict_with_tz():
-    ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
     item = DataItem(id=7, content="hi", created_at=ts)
     d = item.to_dict()
     assert d["id"] == 7

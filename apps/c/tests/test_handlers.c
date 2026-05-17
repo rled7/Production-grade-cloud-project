@@ -6,8 +6,10 @@
 #include "../src/handlers.h"
 #include "vendor/unity.h"
 
-void setUp(void) {}
-void tearDown(void) {}
+void setUp(void) {
+}
+void tearDown(void) {
+}
 
 /* ---------- parse_positive_long ---------- */
 
@@ -170,7 +172,7 @@ static void test_b64url_roundtrip(void) {
     TEST_ASSERT_TRUE(n > 0);
     unsigned char decoded[64];
     int d = b64url_decode(encoded, n, decoded, sizeof(decoded));
-    TEST_ASSERT_EQUAL_INT((int) sizeof(input) - 1, d);
+    TEST_ASSERT_EQUAL_INT((int)sizeof(input) - 1, d);
     TEST_ASSERT_EQUAL_INT(0, memcmp(input, decoded, d));
 }
 
@@ -178,19 +180,18 @@ static void test_b64url_roundtrip(void) {
 
 static void test_jwt_sign_verify_roundtrip(void) {
     const char *secret = "shhh-this-is-the-shared-secret";
-    long long now = (long long) time(NULL);
+    long long now = (long long)time(NULL);
     char payload[256];
     int pn = snprintf(payload, sizeof(payload),
                       "{\"sub\":\"42\",\"email\":\"a@b.c\",\"roles\":[\"writer\"],"
-                      "\"iat\":%lld,\"exp\":%lld}", now, now + 60);
+                      "\"iat\":%lld,\"exp\":%lld}",
+                      now, now + 60);
     char token[2048];
-    int tn = jwt_sign_hs256(payload, pn, secret, strlen(secret),
-                            token, sizeof(token));
+    int tn = jwt_sign_hs256(payload, pn, secret, strlen(secret), token, sizeof(token));
     TEST_ASSERT_TRUE(tn > 0);
 
     char back[512];
-    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now,
-                             back, sizeof(back));
+    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now, back, sizeof(back));
     TEST_ASSERT_EQUAL_INT(0, r);
     /* roundtripped payload must contain sub:"42" */
     TEST_ASSERT_NOT_NULL(strstr(back, "\"sub\":\"42\""));
@@ -198,13 +199,11 @@ static void test_jwt_sign_verify_roundtrip(void) {
 
 static void test_jwt_verify_rejects_wrong_secret(void) {
     const char *secret = "good-secret";
-    long long now = (long long) time(NULL);
+    long long now = (long long)time(NULL);
     char payload[128];
-    snprintf(payload, sizeof(payload),
-             "{\"sub\":\"1\",\"exp\":%lld}", now + 60);
+    snprintf(payload, sizeof(payload), "{\"sub\":\"1\",\"exp\":%lld}", now + 60);
     char token[2048];
-    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret),
-                            token, sizeof(token));
+    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret), token, sizeof(token));
     TEST_ASSERT_TRUE(tn > 0);
     char back[256];
     int r = jwt_verify_hs256(token, tn, "bad-secret", 10, now, back, sizeof(back));
@@ -213,16 +212,13 @@ static void test_jwt_verify_rejects_wrong_secret(void) {
 
 static void test_jwt_verify_rejects_expired(void) {
     const char *secret = "good-secret";
-    long long now = (long long) time(NULL);
+    long long now = (long long)time(NULL);
     char payload[128];
-    snprintf(payload, sizeof(payload),
-             "{\"sub\":\"1\",\"exp\":%lld}", now - 10);
+    snprintf(payload, sizeof(payload), "{\"sub\":\"1\",\"exp\":%lld}", now - 10);
     char token[2048];
-    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret),
-                            token, sizeof(token));
+    int tn = jwt_sign_hs256(payload, strlen(payload), secret, strlen(secret), token, sizeof(token));
     char back[256];
-    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now,
-                             back, sizeof(back));
+    int r = jwt_verify_hs256(token, tn, secret, strlen(secret), now, back, sizeof(back));
     TEST_ASSERT_NOT_EQUAL(0, r);
 }
 
@@ -254,18 +250,18 @@ static void test_cookie_get_session_missing(void) {
 
 static void test_roles_contains_any_hit(void) {
     const char *roles = "[\"reader\",\"writer\"]";
-    const char *wanted[] = { "writer", "admin" };
+    const char *wanted[] = {"writer", "admin"};
     TEST_ASSERT_TRUE(roles_contains_any(roles, strlen(roles), wanted, 2));
 }
 
 static void test_roles_contains_any_miss(void) {
     const char *roles = "[\"reader\"]";
-    const char *wanted[] = { "writer", "admin" };
+    const char *wanted[] = {"writer", "admin"};
     TEST_ASSERT_FALSE(roles_contains_any(roles, strlen(roles), wanted, 2));
 }
 
 static void test_roles_contains_any_empty(void) {
-    const char *wanted[] = { "writer" };
+    const char *wanted[] = {"writer"};
     TEST_ASSERT_FALSE(roles_contains_any("[]", 2, wanted, 1));
 }
 
@@ -282,14 +278,14 @@ static void test_parse_positive_long_max(void) {
 static void test_json_escape_high_bytes_passthrough(void) {
     char buf[16];
     const unsigned char utf8[] = {0xc3, 0xa9, 0xc3, 0xb1, 0}; // é ñ
-    int n = json_escape((const char *) utf8, 4, buf, sizeof(buf));
+    int n = json_escape((const char *)utf8, 4, buf, sizeof(buf));
     TEST_ASSERT_EQUAL_INT(4, n);
     TEST_ASSERT_EQUAL_INT(0, memcmp(buf, utf8, 4));
 }
 
 static void test_json_escape_embedded_null(void) {
     char buf[16];
-    char in[3] = { 'a', 0, 'b' };
+    char in[3] = {'a', 0, 'b'};
     int n = json_escape(in, 3, buf, sizeof(buf));
     TEST_ASSERT_EQUAL_INT(8, n);
     TEST_ASSERT_EQUAL_STRING("a\\u0000b", buf);
@@ -318,7 +314,7 @@ static void test_jwt_verify_malformed_tokens(void) {
 }
 
 static void test_roles_contains_any_malformed(void) {
-    const char *wanted[] = { "writer" };
+    const char *wanted[] = {"writer"};
     TEST_ASSERT_FALSE(roles_contains_any("not json", 8, wanted, 1));
     TEST_ASSERT_FALSE(roles_contains_any("[\"unterminated", 14, wanted, 1));
 }
@@ -347,7 +343,7 @@ static void test_check_api_key_dual_neither_matches(void) {
 
 static void test_check_api_key_dual_only_secondary_set(void) {
     /* primary off, secondary still enforces. */
-    TEST_ASSERT_EQUAL_INT(AUTH_OK,      check_api_key_dual("new", 3, "", "new"));
+    TEST_ASSERT_EQUAL_INT(AUTH_OK, check_api_key_dual("new", 3, "", "new"));
     TEST_ASSERT_EQUAL_INT(AUTH_INVALID, check_api_key_dual("old", 3, "", "new"));
     TEST_ASSERT_EQUAL_INT(AUTH_MISSING, check_api_key_dual(NULL, 0, "", "new"));
 }

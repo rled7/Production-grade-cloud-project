@@ -1,0 +1,16 @@
+# clang-format config used by CI for apps/c and apps/cpp.
+# Matches the existing hand-written style: 4-space indent, 100-col soft cap,
+# attached braces. Vendored sources (mongoose, crow_all, unity) are excluded
+# by the CI step's glob.
+
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AllowShortFunctionsOnASingleLine: InlineOnly
+AlwaysBreakAfterReturnType: None
+BreakBeforeBraces: Attach
+PointerAlignment: Right
+SortIncludes: Never
+SpacesBeforeTrailingComments: 1

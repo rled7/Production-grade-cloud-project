@@ -13,7 +13,7 @@ function makeFakeDb(initialRows = []) {
   const calls = [];
   const state = { failMode: null };
 
-  function maybeFail(op) {
+  function maybeFail(_op) {
     if (state.failMode === 'unavailable') {
       const e = new Error('connect ECONNREFUSED 127.0.0.1:5432');
       e.code = 'ECONNREFUSED';
@@ -66,7 +66,7 @@ function makeFakeCache() {
   const state = { mode: 'normal' }; // 'normal' | 'timeout' | 'throw' | 'returns-null'
   const calls = [];
 
-  function maybeFail(label) {
+  function maybeFail(_label) {
     if (state.mode === 'timeout') {
       // Simulate the timeout race producing a CACHE_TIMEOUT failure that the
       // cache wrapper would normally swallow and return null for. The
@@ -667,7 +667,6 @@ describe('method discipline', () => {
 
 describe('auth edge cases', () => {
   const KEY = 'k';
-  const SECRET = 'jwt-secret-aaaa';
 
   test('login with non-string email/password returns 400', async () => {
     const { app } = authedApp([userRow()]);

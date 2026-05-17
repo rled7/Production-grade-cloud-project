@@ -14,7 +14,7 @@
 static volatile sig_atomic_t s_stop = 0;
 
 static void on_signal(int sig) {
-    (void) sig;
+    (void)sig;
     s_stop = 1;
 }
 
@@ -32,44 +32,48 @@ static int env_int(const char *k, int d) {
  *   <remote> - <user_or_-> [<iso8601_utc>] "<method> <uri> HTTP/1.1" \
  *     <status> <bytes_or_-> - <elapsed_ms> ms
  */
-static void log_access(app_ctx_t *app, struct mg_connection *c,
-                       struct mg_http_message *hm, double elapsed_ms) {
-    if (!app->access_log) return;
+static void log_access(app_ctx_t *app, struct mg_connection *c, struct mg_http_message *hm,
+                       double elapsed_ms) {
+    if (!app->access_log)
+        return;
     char ts[40];
     time_t now = time(NULL);
-    struct tm tm; gmtime_r(&now, &tm);
+    struct tm tm;
+    gmtime_r(&now, &tm);
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &tm);
 
     char remote[64];
     mg_snprintf(remote, sizeof(remote), "%M", mg_print_ip, &c->rem);
 
     char user[32];
-    if (app->last_user_id > 0) snprintf(user, sizeof(user), "%ld", app->last_user_id);
-    else                       snprintf(user, sizeof(user), "-");
+    if (app->last_user_id > 0)
+        snprintf(user, sizeof(user), "%ld", app->last_user_id);
+    else
+        snprintf(user, sizeof(user), "-");
 
     char bytes[32];
-    if (app->last_bytes > 0) snprintf(bytes, sizeof(bytes), "%zu", app->last_bytes);
-    else                     snprintf(bytes, sizeof(bytes), "-");
+    if (app->last_bytes > 0)
+        snprintf(bytes, sizeof(bytes), "%zu", app->last_bytes);
+    else
+        snprintf(bytes, sizeof(bytes), "-");
 
     char line[1024];
-    int n = snprintf(line, sizeof(line),
-                     "%s - %s [%s] \"%.*s %.*s HTTP/1.1\" %d %s - %.2f ms",
-                     remote, user, ts,
-                     (int) hm->method.len, hm->method.buf,
-                     (int) hm->uri.len, hm->uri.buf,
-                     app->last_status, bytes, elapsed_ms);
-    if (n > 0) access_log_write(app->access_log, line, (size_t) n);
+    int n = snprintf(line, sizeof(line), "%s - %s [%s] \"%.*s %.*s HTTP/1.1\" %d %s - %.2f ms",
+                     remote, user, ts, (int)hm->method.len, hm->method.buf, (int)hm->uri.len,
+                     hm->uri.buf, app->last_status, bytes, elapsed_ms);
+    if (n > 0)
+        access_log_write(app->access_log, line, (size_t)n);
 }
 
 static double ts_diff_ms(struct timespec start, struct timespec end) {
-    return (end.tv_sec - start.tv_sec) * 1000.0 +
-           (end.tv_nsec - start.tv_nsec) / 1.0e6;
+    return (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1.0e6;
 }
 
 static void ev_handler(struct mg_connection *c, int ev, void *ev_data) {
-    if (ev != MG_EV_HTTP_MSG) return;
-    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
-    app_ctx_t *app = (app_ctx_t *) c->fn_data;
+    if (ev != MG_EV_HTTP_MSG)
+        return;
+    struct mg_http_message *hm = (struct mg_http_message *)ev_data;
+    app_ctx_t *app = (app_ctx_t *)c->fn_data;
 
     /* Reset per-request scratch. Mongoose is single-threaded so this
      * sequencing is safe. */
@@ -102,19 +106,18 @@ int main(void) {
     const char *redis_host = env_or("REDIS_HOST", "localhost");
     int redis_port = env_int("REDIS_PORT", 6379);
     const char *redis_tls_s = env_or("REDIS_TLS", "false");
-    bool redis_tls = (strcmp(redis_tls_s, "true") == 0 ||
-                      strcmp(redis_tls_s, "1")    == 0);
+    bool redis_tls = (strcmp(redis_tls_s, "true") == 0 || strcmp(redis_tls_s, "1") == 0);
     int ttl = env_int("CACHE_TTL_SECONDS", 30);
     int redis_timeout = env_int("REDIS_TIMEOUT_MS", 200);
-    size_t max_body = (size_t) env_int("MAX_BODY_BYTES", 1048576);
+    size_t max_body = (size_t)env_int("MAX_BODY_BYTES", 1048576);
     const char *api_key = env_or("API_KEY", "");
     const char *api_key_next = env_or("API_KEY_NEXT", "");
     const char *jwt_secret = env_or("JWT_SECRET", "");
     const char *cookie_secure_s = env_or("COOKIE_SECURE", "true");
-    bool cookie_secure = !(strcmp(cookie_secure_s, "false") == 0 ||
-                           strcmp(cookie_secure_s, "0")     == 0);
+    bool cookie_secure =
+        !(strcmp(cookie_secure_s, "false") == 0 || strcmp(cookie_secure_s, "0") == 0);
     const char *access_log_path = env_or("ACCESS_LOG_PATH", "./access.log");
-    size_t access_log_max_bytes = (size_t) env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024);
+    size_t access_log_max_bytes = (size_t)env_int("ACCESS_LOG_MAX_BYTES", 10 * 1024 * 1024);
     int access_log_backups = env_int("ACCESS_LOG_BACKUPS", 5);
 
     app_ctx_t app_ctx;
@@ -126,26 +129,27 @@ int main(void) {
     app_ctx.api_key_next = api_key_next;
     app_ctx.jwt_secret = jwt_secret;
     app_ctx.cookie_secure = cookie_secure;
-    app_ctx.access_log = access_log_open(access_log_path, access_log_max_bytes,
-                                         access_log_backups);
-    if (!api_key[0])    fprintf(stderr, "[warn] API_KEY empty — API-key gate DISABLED\n");
-    if (api_key_next[0]) fprintf(stderr, "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n");
-    if (!jwt_secret[0]) fprintf(stderr, "[warn] JWT_SECRET empty — JWT verification DISABLED\n");
-    if (!app_ctx.access_log) fprintf(stderr, "[warn] access log file unavailable (%s)\n", access_log_path);
-    int n = build_api_prefix(app_lang, app_ctx.api_prefix,
-                             sizeof(app_ctx.api_prefix));
+    app_ctx.access_log = access_log_open(access_log_path, access_log_max_bytes, access_log_backups);
+    if (!api_key[0])
+        fprintf(stderr, "[warn] API_KEY empty — API-key gate DISABLED\n");
+    if (api_key_next[0])
+        fprintf(stderr, "[info] API_KEY_NEXT set — rotation in progress (both keys accepted)\n");
+    if (!jwt_secret[0])
+        fprintf(stderr, "[warn] JWT_SECRET empty — JWT verification DISABLED\n");
+    if (!app_ctx.access_log)
+        fprintf(stderr, "[warn] access log file unavailable (%s)\n", access_log_path);
+    int n = build_api_prefix(app_lang, app_ctx.api_prefix, sizeof(app_ctx.api_prefix));
     if (n < 0) {
         fprintf(stderr, "[fatal] APP_LANG too long\n");
         return 1;
     }
-    app_ctx.api_prefix_len = (size_t) n;
+    app_ctx.api_prefix_len = (size_t)n;
 
     app_ctx.db = db_connect(db_host, db_port, db_name, db_user, db_pass);
     if (app_ctx.db && db_ensure_schema(app_ctx.db) != DB_OK) {
         fprintf(stderr, "[warn] could not ensure schema on startup; will retry on demand\n");
     }
-    app_ctx.cache = cache_connect(redis_host, redis_port, redis_timeout,
-                                  redis_tls);
+    app_ctx.cache = cache_connect(redis_host, redis_port, redis_timeout, redis_tls);
     if (!app_ctx.cache) {
         fprintf(stderr, "[warn] redis unavailable at startup; serving directly from DB\n");
     }
@@ -158,10 +162,10 @@ int main(void) {
         fprintf(stderr, "[fatal] failed to bind %s\n", url);
         return 1;
     }
-    fprintf(stderr, "[info] %s api listening on %s prefix=%s\n",
-            app_lang, url, app_ctx.api_prefix);
+    fprintf(stderr, "[info] %s api listening on %s prefix=%s\n", app_lang, url, app_ctx.api_prefix);
 
-    while (!s_stop) mg_mgr_poll(&mgr, 1000);
+    while (!s_stop)
+        mg_mgr_poll(&mgr, 1000);
 
     fprintf(stderr, "[info] shutting down\n");
     mg_mgr_free(&mgr);

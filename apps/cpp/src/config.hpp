@@ -19,26 +19,27 @@ struct Config {
     int cache_ttl_seconds = 30;
     int redis_timeout_ms = 200;
     std::size_t max_body_bytes = 1048576;
-    std::string api_key = "";       // empty => auth disabled
-    std::string api_key_next = "";  // empty => no second key (rotation off)
+    std::string api_key = "";      // empty => auth disabled
+    std::string api_key_next = ""; // empty => no second key (rotation off)
 
     std::string api_prefix() const { return "/api/" + app_lang; }
     std::string dsn() const {
-        return "host=" + db_host + " port=" + std::to_string(db_port) +
-               " dbname=" + db_name + " user=" + db_user +
-               " password=" + db_password;
+        return "host=" + db_host + " port=" + std::to_string(db_port) + " dbname=" + db_name +
+               " user=" + db_user + " password=" + db_password;
     }
 };
 
-inline std::string env_str(const char* name, const std::string& def) {
-    const char* v = std::getenv(name);
-    if (v == nullptr || *v == '\0') return def;
+inline std::string env_str(const char *name, const std::string &def) {
+    const char *v = std::getenv(name);
+    if (v == nullptr || *v == '\0')
+        return def;
     return std::string(v);
 }
 
-inline int env_int(const char* name, int def) {
-    const char* v = std::getenv(name);
-    if (v == nullptr || *v == '\0') return def;
+inline int env_int(const char *name, int def) {
+    const char *v = std::getenv(name);
+    if (v == nullptr || *v == '\0')
+        return def;
     try {
         return std::stoi(v);
     } catch (...) {
@@ -46,12 +47,14 @@ inline int env_int(const char* name, int def) {
     }
 }
 
-inline std::size_t env_size(const char* name, std::size_t def) {
-    const char* v = std::getenv(name);
-    if (v == nullptr || *v == '\0') return def;
+inline std::size_t env_size(const char *name, std::size_t def) {
+    const char *v = std::getenv(name);
+    if (v == nullptr || *v == '\0')
+        return def;
     try {
         long long parsed = std::stoll(v);
-        if (parsed < 0) return def;
+        if (parsed < 0)
+            return def;
         return static_cast<std::size_t>(parsed);
     } catch (...) {
         return def;
@@ -75,4 +78,4 @@ inline Config load_config() {
     return c;
 }
 
-}  // namespace app
+} // namespace app

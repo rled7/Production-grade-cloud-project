@@ -1,16 +1,15 @@
 """Integration tests using TestClient with injected fake db and cache."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any, Optional
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
-from app.db import DataItem, DatabaseUnavailable
+from app.db import DatabaseUnavailable, DataItem
 from app.main import create_app
-
 
 # ---------- Fakes ----------
 
@@ -31,7 +30,7 @@ class FakeDB:
             raise DatabaseUnavailable("simulated outage")
         return sorted(self.items, key=lambda r: r.created_at, reverse=True)
 
-    def get_by_id(self, item_id: int) -> Optional[DataItem]:
+    def get_by_id(self, item_id: int) -> DataItem | None:
         if self.unavailable:
             raise DatabaseUnavailable("simulated outage")
         for r in self.items:
@@ -45,7 +44,7 @@ class FakeDB:
         row = DataItem(
             id=self._next_id,
             content=content,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self._next_id += 1
         self.items.append(row)
@@ -64,7 +63,7 @@ class FakeCache:
         self.set_calls: list[str] = []
         self.delete_calls: list[str] = []
 
-    def get_json(self, key: str) -> Optional[Any]:
+    def get_json(self, key: str) -> Any | None:
         self.get_calls.append(key)
         return self.store.get(key)
 
@@ -92,7 +91,7 @@ class BrokenCache:
         self.set_calls = 0
         self.delete_calls = 0
 
-    def get_json(self, key: str) -> Optional[Any]:
+    def get_json(self, key: str) -> Any | None:
         self.get_calls += 1
         # Simulate "timeout caught, return None"
         return None
@@ -323,7 +322,7 @@ def test_get_list_redis_outage_returns_db_200(fake_db):
     """Critical: Redis timeout/outage must NOT cause 5xx; serves from db."""
     broken = BrokenCache()
     fake_db.items.append(
-        DataItem(id=1, content="seeded", created_at=datetime.now(timezone.utc))
+        DataItem(id=1, content="seeded", created_at=datetime.now(UTC))
     )
     app = create_app(db=fake_db, cache=broken, config=make_config())
     with TestClient(app) as c:
@@ -339,7 +338,7 @@ def test_get_list_redis_outage_returns_db_200(fake_db):
 def test_get_by_id_redis_outage_returns_db_200(fake_db):
     broken = BrokenCache()
     fake_db.items.append(
-        DataItem(id=5, content="x", created_at=datetime.now(timezone.utc))
+        DataItem(id=5, content="x", created_at=datetime.now(UTC))
     )
     fake_db._next_id = 6
     app = create_app(db=fake_db, cache=broken, config=make_config())
@@ -394,7 +393,7 @@ def test_data_route_returns_401_with_wrong_key(fake_db, fake_cache):
 
 def test_data_route_returns_200_with_correct_key(fake_db, fake_cache):
     fake_db.items.append(
-        DataItem(id=1, content="x", created_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
+        DataItem(id=1, content="x", created_at=datetime(2024, 1, 1, tzinfo=UTC))
     )
     fake_db._next_id = 2
     app = create_app(db=fake_db, cache=fake_cache, config=make_config(api_key=API_KEY))
@@ -693,7 +692,7 @@ def test_health_with_extra_path_returns_404(fake_db, fake_cache):
 
 def test_listing_serializes_created_at_as_iso_string(fake_db, fake_cache):
     fake_db.items.append(
-        DataItem(id=99, content="x", created_at=datetime(2024, 5, 1, 12, 30, 0, tzinfo=timezone.utc))
+        DataItem(id=99, content="x", created_at=datetime(2024, 5, 1, 12, 30, 0, tzinfo=UTC))
     )
     fake_db._next_id = 100
     app = create_app(db=fake_db, cache=fake_cache, config=make_config())

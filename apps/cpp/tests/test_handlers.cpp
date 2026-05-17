@@ -150,8 +150,8 @@ TEST(CheckApiKey, OkOnExactMatch) {
 #include "auth.hpp"
 
 TEST(B64UrlRoundtrip, Works) {
-    const char* in = "Hello, World!";
-    auto enc = b64url_encode(reinterpret_cast<const unsigned char*>(in), 13);
+    const char *in = "Hello, World!";
+    auto enc = b64url_encode(reinterpret_cast<const unsigned char *>(in), 13);
     auto dec = b64url_decode(enc);
     ASSERT_TRUE(dec.has_value());
     std::string back(dec->begin(), dec->end());
@@ -161,9 +161,9 @@ TEST(B64UrlRoundtrip, Works) {
 TEST(JwtRoundtrip, VerifiesWithCorrectSecret) {
     const std::string secret = "shhh-shared-secret";
     long long now = std::time(nullptr);
-    std::string payload = std::string("{\"sub\":\"42\",\"roles\":[\"writer\"],")
-                          + "\"iat\":" + std::to_string(now)
-                          + ",\"exp\":" + std::to_string(now + 60) + "}";
+    std::string payload = std::string("{\"sub\":\"42\",\"roles\":[\"writer\"],") +
+                          "\"iat\":" + std::to_string(now) +
+                          ",\"exp\":" + std::to_string(now + 60) + "}";
     auto token = jwt_sign_hs256(payload, secret);
     ASSERT_FALSE(token.empty());
     auto back = jwt_verify_hs256(token, secret, now);
@@ -208,9 +208,9 @@ TEST(RolesContainsAny, HitsAndMisses) {
 }
 
 TEST(ParseUserPayload, ExtractsClaims) {
-    auto u = parse_user_payload(
-        "{\"sub\":\"42\",\"email\":\"a@b.c\",\"roles\":[\"writer\",\"admin\"],"
-        "\"iat\":1,\"exp\":2}");
+    auto u =
+        parse_user_payload("{\"sub\":\"42\",\"email\":\"a@b.c\",\"roles\":[\"writer\",\"admin\"],"
+                           "\"iat\":1,\"exp\":2}");
     EXPECT_EQ(u.id, 42);
     EXPECT_EQ(u.email, "a@b.c");
     EXPECT_NE(u.roles_json.find("\"writer\""), std::string::npos);
@@ -219,7 +219,9 @@ TEST(ParseUserPayload, ExtractsClaims) {
 
 TEST(HandleMe, ProducesJson) {
     CurrentUser u;
-    u.id = 7; u.email = "x@y"; u.roles_json = "[\"reader\"]";
+    u.id = 7;
+    u.email = "x@y";
+    u.roles_json = "[\"reader\"]";
     auto r = handle_me(u);
     EXPECT_EQ(r.status, 200);
     EXPECT_NE(r.body.find("\"id\":7"), std::string::npos);
@@ -315,5 +317,5 @@ TEST(CheckApiKeyDual, NeitherMatches) {
 TEST(CheckApiKeyDual, OnlySecondarySet) {
     EXPECT_EQ(check_api_key_dual("new", "", "new"), AuthStatus::Ok);
     EXPECT_EQ(check_api_key_dual("old", "", "new"), AuthStatus::Invalid);
-    EXPECT_EQ(check_api_key_dual("",    "", "new"), AuthStatus::Missing);
+    EXPECT_EQ(check_api_key_dual("", "", "new"), AuthStatus::Missing);
 }
