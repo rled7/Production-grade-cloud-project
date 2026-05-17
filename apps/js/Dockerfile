@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:20-slim AS builder
+FROM node:26-slim AS builder
 
 ENV NODE_ENV=production
 
@@ -11,7 +11,7 @@ RUN npm install --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 
-FROM node:20-slim AS runtime
+FROM node:26-slim AS runtime
 
 ENV NODE_ENV=production \
     PORT=8080 \
